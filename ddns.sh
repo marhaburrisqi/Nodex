@@ -14,13 +14,47 @@ DRY_RUN=0
 TEST_IP=""
 DRY_RUN_UPDATE=0
 
+# ANSI Colors
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+show_banner() {
+    printf "${CYAN}"
+    printf "  _  _  ___  ___  ___  __  __\n"
+    printf " | \| |/ _ \|   \| __|\ \/ /\n"
+    printf " | .  | (_) | |) | _|  >  < \n"
+    printf " |_|\_|\___/|___/|___/_/\_\\\n"
+    printf "  🌐 Dynamic DNS Automation Tool\n"
+    printf "${NC}\n"
+}
+
 log() {
-    echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
+    timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+    printf "${CYAN}[%s]${NC} %s\n" "$timestamp" "$*"
+}
+
+log_box() {
+    title="$1"
+    status="$2"
+    details="$3"
+
+    printf "${BLUE}┌────────────────────────────────────────────────────────┐${NC}\n"
+    printf "${BLUE}│${NC} ${BOLD}%-54s${NC} ${BLUE}│${NC}\n" "$title"
+    printf "${BLUE}├────────────────────────────────────────────────────────┤${NC}\n"
+    printf "${BLUE}│${NC} Status:  %-46s ${BLUE}│${NC}\n" "$status"
+    printf "${BLUE}│${NC} Details: %-46s ${BLUE}│${NC}\n" "$details"
+    printf "${BLUE}└────────────────────────────────────────────────────────┘${NC}\n"
 }
 
 usage() {
+    show_banner
     cat <<EOF
-Usage: ddns [OPTIONS]
+Usage: nodex [OPTIONS]
 
 Options:
   -p, --provider <name>   DNS Provider (cloudflare | duckdns) [default: cloudflare]
@@ -39,16 +73,30 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        -p|--provider) PROVIDER="$2"; shift 2 ;;
-        -d|--domain) DOMAIN="$2"; shift 2 ;;
-        -t|--token) TOKEN="$2"; shift 2 ;;
-        -z|--zone) ZONE_ID="$2"; shift 2 ;;
-        -type|--record-type) RECORD_TYPE="$2"; shift 2 ;;
-        -i|--interval) INTERVAL="$2"; shift 2 ;;
+        -p|--provider)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            PROVIDER="$2"; shift 2 ;;
+        -d|--domain)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            DOMAIN="$2"; shift 2 ;;
+        -t|--token)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            TOKEN="$2"; shift 2 ;;
+        -z|--zone)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            ZONE_ID="$2"; shift 2 ;;
+        -type|--record-type)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            RECORD_TYPE="$2"; shift 2 ;;
+        -i|--interval)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            INTERVAL="$2"; shift 2 ;;
         --daemon) MODE="daemon"; shift ;;
         --force) FORCE=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
-        --test-ip) TEST_IP="$2"; shift 2 ;;
+        --test-ip)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            TEST_IP="$2"; shift 2 ;;
         --dry-run-update) DRY_RUN_UPDATE=1; shift ;;
         -h|--help) usage ;;
         *) echo "Error: Unknown argument $1" >&2; exit 1 ;;
@@ -86,7 +134,7 @@ get_public_ip() {
     fi
 
     if [ -z "$ip" ]; then
-        log "Error: Failed to fetch public IP address" >&2
+        log "${RED}Error: Failed to fetch public IP address${NC}" >&2
         return 1
     fi
 
@@ -124,18 +172,18 @@ update_ip_cache() {
 
 update_duckdns() {
     ip="$1"
-    log "Updating DuckDNS record $DOMAIN to $ip..."
+    log "Updating DuckDNS record ${BOLD}$DOMAIN${NC} to ${GREEN}$ip${NC}..."
 
     # DuckDNS domains argument usually drops .duckdns.org suffix if passed
     subdomain=$(echo "$DOMAIN" | sed 's/\.duckdns\.org$//')
 
-    response=$(curl -s --max-time 15 "https://duckdns.org/update?domains=${subdomain}&token=${TOKEN}&ip=${ip}")
+    response=$(curl -sL --max-time 15 "https://www.duckdns.org/update?domains=${subdomain}&token=${TOKEN}&ip=${ip}")
 
     if [ "$response" = "OK" ]; then
-        log "Successfully updated DuckDNS record to $ip"
+        log_box "DuckDNS Sync Result" "${GREEN}SUCCESS${NC}" "Record updated to $ip"
         return 0
     else
-        log "Error: DuckDNS update failed with response: $response" >&2
+        log_box "DuckDNS Sync Result" "${RED}FAILED${NC}" "Response: $response"
         return 1
     fi
 }
@@ -143,15 +191,15 @@ update_duckdns() {
 update_cloudflare() {
     ip="$1"
     if [ -z "$ZONE_ID" ]; then
-        log "Error: CF_ZONE_ID (or --zone) is required for Cloudflare provider" >&2
+        log "${RED}Error: CF_ZONE_ID (or --zone) is required for Cloudflare provider${NC}" >&2
         return 1
     fi
     if [ -z "$TOKEN" ]; then
-        log "Error: CF_API_TOKEN (or --token) is required for Cloudflare provider" >&2
+        log "${RED}Error: CF_API_TOKEN (or --token) is required for Cloudflare provider${NC}" >&2
         return 1
     fi
 
-    log "Querying Cloudflare API for existing $RECORD_TYPE record ($DOMAIN)..."
+    log "Querying Cloudflare API for existing $RECORD_TYPE record (${BOLD}$DOMAIN${NC})..."
     records_response=$(curl -s --max-time 15 -X GET \
         "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=${RECORD_TYPE}&name=${DOMAIN}" \
         -H "Authorization: Bearer ${TOKEN}" \
@@ -165,11 +213,11 @@ update_cloudflare() {
     fi
 
     if [ -z "$record_id" ]; then
-        log "Error: Could not find existing $RECORD_TYPE record for $DOMAIN on Cloudflare" >&2
+        log_box "Cloudflare Sync Result" "${RED}FAILED${NC}" "No existing $RECORD_TYPE record found for $DOMAIN"
         return 1
     fi
 
-    log "Updating Cloudflare record $record_id to $ip..."
+    log "Updating Cloudflare record $record_id to ${GREEN}$ip${NC}..."
     update_response=$(curl -s --max-time 15 -X PUT \
         "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${record_id}" \
         -H "Authorization: Bearer ${TOKEN}" \
@@ -187,29 +235,29 @@ update_cloudflare() {
     fi
 
     if [ "$success" = "true" ]; then
-        log "Successfully updated Cloudflare record to $ip"
+        log_box "Cloudflare Sync Result" "${GREEN}SUCCESS${NC}" "Record updated to $ip"
         return 0
     else
-        log "Error: Cloudflare record update failed: $update_response" >&2
+        log_box "Cloudflare Sync Result" "${RED}FAILED${NC}" "API response error"
         return 1
     fi
 }
 
 run_check() {
     if [ -z "$DOMAIN" ]; then
-        log "Error: Domain is required (--domain or DDNS_DOMAIN)" >&2
+        log "${RED}Error: Domain is required (--domain or DDNS_DOMAIN)${NC}" >&2
         exit 1
     fi
     if [ -z "$TOKEN" ]; then
-        log "Error: Token is required (--token or DDNS_TOKEN)" >&2
+        log "${RED}Error: Token is required (--token or DDNS_TOKEN)${NC}" >&2
         exit 1
     fi
 
     current_ip=$(get_public_ip)
-    log "Current public IP ($RECORD_TYPE): $current_ip"
+    log "Current public IP (${BOLD}$RECORD_TYPE${NC}): ${GREEN}$current_ip${NC}"
 
     if is_ip_changed "$current_ip"; then
-        log "IP changed or force update requested. Triggering update..."
+        log "${YELLOW}IP changed or force update requested. Triggering update...${NC}"
 
         if [ "$DRY_RUN_UPDATE" -eq 1 ]; then
             log "[DRY-RUN] Would update $PROVIDER for $DOMAIN to $current_ip"
@@ -220,20 +268,21 @@ run_check() {
         case "$PROVIDER" in
             cloudflare) update_cloudflare "$current_ip" ;;
             duckdns) update_duckdns "$current_ip" ;;
-            *) log "Error: Unsupported provider $PROVIDER" >&2; exit 1 ;;
+            *) log "${RED}Error: Unsupported provider $PROVIDER${NC}" >&2; exit 1 ;;
         esac
 
         update_ip_cache "$current_ip"
     else
-        log "IP address unchanged ($current_ip). Skipping DNS update."
+        log "${GREEN}IP address unchanged ($current_ip). Skipping DNS update.${NC}"
     fi
 }
 
 main() {
+    show_banner
     if [ "$MODE" = "daemon" ]; then
-        log "Starting DDNS Automation Bot in daemon mode (interval: ${INTERVAL}s)..."
+        log "Starting NODEX in daemon mode (interval: ${INTERVAL}s)..."
         while true; do
-            run_check || log "Warning: Check iteration encountered errors."
+            run_check || log "${YELLOW}Warning: Check iteration encountered errors.${NC}"
             sleep "$INTERVAL"
         done
     else

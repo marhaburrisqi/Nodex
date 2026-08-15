@@ -2,14 +2,32 @@
 set -eu
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-BINARY_NAME="ddns"
-RAW_URL="${RAW_URL:-https://raw.githubusercontent.com/user/ddns-bot/main/ddns.sh}"
+BINARY_NAME="nodex"
+RAW_URL="${RAW_URL:-https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/ddns.sh}"
 
-log() {
-    echo "[INSTALLER] $*"
+# ANSI Colors
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+show_banner() {
+    printf "${CYAN}"
+    printf "  _  _  ___  ___  ___  __  __\n"
+    printf " | \| |/ _ \|   \| __|\ \/ /\n"
+    printf " | .  | (_) | |) | _|  >  < \n"
+    printf " |_|\_|\___/|___/|___/_/\_\\\n"
+    printf "  🌐 Dynamic DNS Automation Tool\n"
+    printf "${NC}\n"
 }
 
-log "Installing DDNS Automation Bot to ${INSTALL_DIR}/${BINARY_NAME}..."
+log() {
+    printf "${GREEN}[INSTALLER]${NC} %s\n" "$*"
+}
+
+show_banner
+
+log "Installing NODEX to ${INSTALL_DIR}/${BINARY_NAME}..."
 
 if [ ! -d "$INSTALL_DIR" ]; then
     mkdir -p "$INSTALL_DIR"
@@ -28,16 +46,16 @@ log "Successfully installed binary to ${INSTALL_DIR}/${BINARY_NAME}"
 
 # Optional Systemd service setup if /etc/systemd/system exists and is writable
 if [ -d "/etc/systemd/system" ] && [ -w "/etc/systemd/system" ] && command -v systemctl >/dev/null 2>&1; then
-    log "Creating systemd service template at /etc/systemd/system/ddns.service..."
-    cat <<EOF | tee /etc/systemd/system/ddns.service >/dev/null
+    log "Creating systemd service template at /etc/systemd/system/nodex.service..."
+    cat <<EOF | tee /etc/systemd/system/nodex.service >/dev/null
 [Unit]
-Description=DDNS Automation Bot Service
+Description=NODEX Dynamic DNS Automation Service
 After=network.target network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/default/ddns
+EnvironmentFile=-/etc/default/nodex
 ExecStart=${INSTALL_DIR}/${BINARY_NAME} --daemon
 Restart=on-failure
 RestartSec=10
@@ -45,8 +63,9 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
-    log "Systemd service created. Create /etc/default/ddns with your configuration and run:"
-    log "  systemctl daemon-reload && systemctl enable --now ddns"
+    log "Systemd service created at /etc/systemd/system/nodex.service."
+    log "Create /etc/default/nodex with your configuration and run:"
+    log "  systemctl daemon-reload && systemctl enable --now nodex"
 fi
 
-log "Installation complete!"
+printf "\n${BLUE}✓ Installation complete! Run 'nodex --help' to get started.${NC}\n"

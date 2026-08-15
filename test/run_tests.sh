@@ -76,7 +76,7 @@ TMP_INSTALL_DIR="/tmp/ddns_test_install"
 rm -rf "$TMP_INSTALL_DIR"
 INSTALL_DIR="$TMP_INSTALL_DIR" ./install.sh > /dev/null 2>&1
 
-if [ -x "${TMP_INSTALL_DIR}/ddns" ]; then
+if [ -x "${TMP_INSTALL_DIR}/nodex" ]; then
     assert_equals "1" "1" "Installer deploys executable"
 else
     assert_equals "installed" "missing" "Installer deploys executable"
