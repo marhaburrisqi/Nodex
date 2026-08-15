@@ -12,17 +12,17 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 show_banner() {
-    printf "${CYAN}"
-    printf "  _  _  ___  ___  ___  __  __\n"
-    printf " | \| |/ _ \|   \| __|\ \/ /\n"
-    printf " | .  | (_) | |) | _|  >  < \n"
-    printf " |_|\_|\___/|___/|___/_/\_\\\n"
-    printf "  🌐 Dynamic DNS Automation Tool\n"
-    printf "${NC}\n"
+    printf "%b" "${CYAN}"
+    printf '%s\n' ' _  _   ___   ___   ___  __  __'
+    printf '%s\n' '| \| | / _ \ |   \ | __| \ \/ /'
+    printf '%s\n' '| .  || (_) || |) || _|   >  < '
+    printf '%s\n' '|_|\_| \___/ |___/ |___| /_/\_\'
+    printf '\n%s\n\n' ' Dynamic DNS Automation Tool'
+    printf "%b" "${NC}"
 }
 
 log() {
-    printf "${GREEN}[INSTALLER]${NC} %s\n" "$*"
+    printf "%b[INSTALLER]%b %s\n" "${GREEN}" "${NC}" "$*"
 }
 
 show_banner
@@ -43,6 +43,12 @@ fi
 
 chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 log "Successfully installed binary to ${INSTALL_DIR}/${BINARY_NAME}"
+
+# Symlink 'modex' typo redirect to 'nodex'
+if [ -w "$INSTALL_DIR" ]; then
+    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/modex" 2>/dev/null || true
+    log "Created helper alias 'modex' -> 'nodex'"
+fi
 
 # Optional Systemd service setup if /etc/systemd/system exists and is writable
 if [ -d "/etc/systemd/system" ] && [ -w "/etc/systemd/system" ] && command -v systemctl >/dev/null 2>&1; then
@@ -68,4 +74,4 @@ EOF
     log "  systemctl daemon-reload && systemctl enable --now nodex"
 fi
 
-printf "\n${BLUE}✓ Installation complete! Run 'nodex --help' to get started.${NC}\n"
+printf "\n%b✓ Installation complete! Run 'nodex --help' to get started.%b\n" "${BLUE}" "${NC}"

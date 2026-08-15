@@ -24,18 +24,18 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 show_banner() {
-    printf "${CYAN}"
-    printf "  _  _  ___  ___  ___  __  __\n"
-    printf " | \| |/ _ \|   \| __|\ \/ /\n"
-    printf " | .  | (_) | |) | _|  >  < \n"
-    printf " |_|\_|\___/|___/|___/_/\_\\\n"
-    printf "  🌐 Dynamic DNS Automation Tool\n"
-    printf "${NC}\n"
+    printf "%b" "${CYAN}"
+    printf '%s\n' ' _  _   ___   ___   ___  __  __'
+    printf '%s\n' '| \| | / _ \ |   \ | __| \ \/ /'
+    printf '%s\n' '| .  || (_) || |) || _|   >  < '
+    printf '%s\n' '|_|\_| \___/ |___/ |___| /_/\_\'
+    printf '\n%s\n\n' ' Dynamic DNS Automation Tool'
+    printf "%b" "${NC}"
 }
 
 log() {
     timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-    printf "${CYAN}[%s]${NC} %s\n" "$timestamp" "$*"
+    printf "%b[%s]%b %b\n" "${CYAN}" "$timestamp" "${NC}" "$*"
 }
 
 log_box() {
@@ -43,12 +43,12 @@ log_box() {
     status="$2"
     details="$3"
 
-    printf "${BLUE}┌────────────────────────────────────────────────────────┐${NC}\n"
-    printf "${BLUE}│${NC} ${BOLD}%-54s${NC} ${BLUE}│${NC}\n" "$title"
-    printf "${BLUE}├────────────────────────────────────────────────────────┤${NC}\n"
-    printf "${BLUE}│${NC} Status:  %-46s ${BLUE}│${NC}\n" "$status"
-    printf "${BLUE}│${NC} Details: %-46s ${BLUE}│${NC}\n" "$details"
-    printf "${BLUE}└────────────────────────────────────────────────────────┘${NC}\n"
+    printf "%b┌────────────────────────────────────────────────────────┐%b\n" "${BLUE}" "${NC}"
+    printf "%b│%b %b%-54s%b %b│%b\n" "${BLUE}" "${NC}" "${BOLD}" "$title" "${NC}" "${BLUE}" "${NC}"
+    printf "%b├────────────────────────────────────────────────────────┤%b\n" "${BLUE}" "${NC}"
+    printf "%b│%b Status:  %-46b %b│%b\n" "${BLUE}" "${NC}" "$status" "${BLUE}" "${NC}"
+    printf "%b│%b Details: %-46b %b│%b\n" "${BLUE}" "${NC}" "$details" "${BLUE}" "${NC}"
+    printf "%b└────────────────────────────────────────────────────────┘%b\n" "${BLUE}" "${NC}"
 }
 
 usage() {
@@ -244,13 +244,10 @@ update_cloudflare() {
 }
 
 run_check() {
-    if [ -z "$DOMAIN" ]; then
-        log "${RED}Error: Domain is required (--domain or DDNS_DOMAIN)${NC}" >&2
-        exit 1
-    fi
-    if [ -z "$TOKEN" ]; then
-        log "${RED}Error: Token is required (--token or DDNS_TOKEN)${NC}" >&2
-        exit 1
+    if [ -z "$DOMAIN" ] || [ -z "$TOKEN" ]; then
+        log "${YELLOW}Missing required parameters. Showing usage guide...${NC}"
+        echo ""
+        usage
     fi
 
     current_ip=$(get_public_ip)
@@ -278,15 +275,20 @@ run_check() {
 }
 
 main() {
-    show_banner
     if [ "$MODE" = "daemon" ]; then
+        show_banner
         log "Starting NODEX in daemon mode (interval: ${INTERVAL}s)..."
         while true; do
             run_check || log "${YELLOW}Warning: Check iteration encountered errors.${NC}"
             sleep "$INTERVAL"
         done
     else
-        run_check
+        if [ -z "$DOMAIN" ] || [ -z "$TOKEN" ]; then
+            usage
+        else
+            show_banner
+            run_check
+        fi
     fi
 }
 
