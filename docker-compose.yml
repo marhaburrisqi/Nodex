@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  ddns-bot:
+    build: .
+    container_name: ddns-bot
+    restart: unless-stopped
+    environment:
+      - DDNS_PROVIDER=cloudflare
+      - DDNS_DOMAIN=home.example.com
+      - DDNS_TOKEN=your_cloudflare_api_token
+      - DDNS_ZONE_ID=your_cloudflare_zone_id
+      - DDNS_INTERVAL=300
+      - DDNS_MODE=daemon
