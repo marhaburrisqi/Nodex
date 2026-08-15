@@ -87,6 +87,21 @@ else
     curl -fsSL "$RAW_URL" -o "$TMP_FILE"
 fi
 
+# Dynamically stamp current commit hash into the installed binary
+COMMIT_HASH=""
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || true)
+fi
+
+if [ -z "$COMMIT_HASH" ]; then
+    COMMIT_HASH=$(curl -fsSL --max-time 2 "https://api.github.com/repos/marhaburrisqi/Nodex/commits/main" 2>/dev/null | grep '"sha"' | head -n 1 | cut -d'"' -f4 | cut -c1-7 || true)
+fi
+
+if [ -n "$COMMIT_HASH" ]; then
+    sed -i "s/^BUILD_HASH=\".*\"/BUILD_HASH=\"${COMMIT_HASH}\"/" "$TMP_FILE" 2>/dev/null || \
+    sed "s/^BUILD_HASH=\".*\"/BUILD_HASH=\"${COMMIT_HASH}\"/" "$TMP_FILE" > "${TMP_FILE}.stamped" && mv "${TMP_FILE}.stamped" "$TMP_FILE" 2>/dev/null || true
+fi
+
 if ! cp "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null; then
     log "${RED}Error: Cannot write to ${INSTALL_DIR}/${BINARY_NAME}.${NC}" >&2
     exit 1

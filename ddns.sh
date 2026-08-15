@@ -2,6 +2,7 @@
 set -eu
 
 CURRENT_VERSION="1.0.0"
+BUILD_HASH="dev"
 
 # Baseline defaults
 PROVIDER="cloudflare"
@@ -120,8 +121,12 @@ EOF
 
 perform_self_update() {
     log "Checking for updates and updating NODEX..."
-    RAW_INSTALL_URL="https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/install.sh"
-    if curl -fsSL --max-time 15 "$RAW_INSTALL_URL" | sh; then
+    target_bin="$0"
+    if [ ! -w "$target_bin" ] 2>/dev/null; then
+        target_bin=$(command -v nodex 2>/dev/null || echo "$0")
+    fi
+    log "Downloading latest NODEX binary to $target_bin..."
+    if curl -fsSL --max-time 15 "https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/ddns.sh" -o "$target_bin" && chmod +x "$target_bin"; then
         log_box "NODEX Update" "${GREEN}SUCCESS${NC}" "NODEX updated successfully."
         exit 0
     else
@@ -130,12 +135,12 @@ perform_self_update() {
     fi
 }
 
-get_remote_version() {
-    remote_ver=$(curl -fsSL --max-time 2 https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/ddns.sh 2>/dev/null | grep '^CURRENT_VERSION=' | head -n 1 | cut -d'"' -f2 || true)
-    if [ -z "$remote_ver" ]; then
-        echo "$CURRENT_VERSION"
+get_remote_hash() {
+    remote_h=$(curl -fsSL --max-time 2 "https://api.github.com/repos/marhaburrisqi/Nodex/commits/main" 2>/dev/null | grep '"sha"' | head -n 1 | cut -d'"' -f4 | cut -c1-7 || true)
+    if [ -z "$remote_h" ]; then
+        echo "$BUILD_HASH"
     else
-        echo "$remote_ver"
+        echo "$remote_h"
     fi
 }
 
@@ -542,12 +547,12 @@ tui_menu() {
     trap cleanup_tui INT TERM EXIT
 
     selected=0
-    remote_ver=$(get_remote_version)
+    remote_hash=$(get_remote_hash)
 
     has_update=0
-    if [ "$remote_ver" != "$CURRENT_VERSION" ]; then
+    if [ -n "$remote_hash" ] && [ "$remote_hash" != "$BUILD_HASH" ]; then
         has_update=1
-        menu_items="* Update to v${remote_ver} (current: v${CURRENT_VERSION});1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
+        menu_items="* Update to latest version (${remote_hash});1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
         total_items=7
     else
         menu_items="1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
@@ -575,7 +580,7 @@ tui_menu() {
 
         printf "+----------------------------------------------------------+\n"
         if [ "$has_update" -eq 1 ]; then
-            title_text="NODEX Gateway (v${CURRENT_VERSION}) -> Update Available: v${remote_ver}"
+            title_text="NODEX Gateway (v${CURRENT_VERSION}) -> Update Available! (${remote_hash})"
             printf "| %b%-56s%b |\n" "${YELLOW}${BOLD}" "$title_text" "${NC}"
         else
             title_text="NODEX Gateway (v${CURRENT_VERSION})"
