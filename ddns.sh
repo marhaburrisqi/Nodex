@@ -1,38 +1,60 @@
 #!/bin/sh
 set -eu
 
-# Defaults from environment or baseline
-PROVIDER="${DDNS_PROVIDER:-cloudflare}"
-DOMAIN="${DDNS_DOMAIN:-}"
-TOKEN="${DDNS_TOKEN:-}"
-ZONE_ID="${DDNS_ZONE_ID:-}"
-RECORD_TYPE="${DDNS_RECORD_TYPE:-A}"
-INTERVAL="${DDNS_INTERVAL:-300}"
-MODE="${DDNS_MODE:-once}"
-FORCE="${DDNS_FORCE:-0}"
+# Baseline defaults
+PROVIDER="cloudflare"
+DOMAIN=""
+TOKEN=""
+ZONE_ID=""
+RECORD_TYPE="A"
+INTERVAL="300"
+MODE="once"
+FORCE=0
 DRY_RUN=0
 TEST_IP=""
 DRY_RUN_UPDATE=0
+
+# Capture caller environment before config file load
+ENV_PROVIDER="${DDNS_PROVIDER-}"
+ENV_DOMAIN="${DDNS_DOMAIN-}"
+ENV_TOKEN="${DDNS_TOKEN-}"
+ENV_ZONE_ID="${DDNS_ZONE_ID-}"
+ENV_RECORD_TYPE="${DDNS_RECORD_TYPE-}"
+ENV_INTERVAL="${DDNS_INTERVAL-}"
+ENV_MODE="${DDNS_MODE-}"
+ENV_FORCE="${DDNS_FORCE-}"
 
 # Config File Paths
 CONFIG_DIR="${HOME:-/root}/.config/nodex"
 CONFIG_FILE="${CONFIG_DIR}/config"
 GLOBAL_CONFIG="/etc/default/nodex"
 
-# Load config if present
+# Load config file if present
 if [ -f "$GLOBAL_CONFIG" ]; then
     . "$GLOBAL_CONFIG" 2>/dev/null || true
 elif [ -f "$CONFIG_FILE" ]; then
     . "$CONFIG_FILE" 2>/dev/null || true
 fi
 
-# Re-assign variables loaded from config if ENV/CLI didn't override baseline defaults
-PROVIDER="${DDNS_PROVIDER:-$PROVIDER}"
-DOMAIN="${DDNS_DOMAIN:-$DOMAIN}"
-TOKEN="${DDNS_TOKEN:-$TOKEN}"
-ZONE_ID="${DDNS_ZONE_ID:-$ZONE_ID}"
-RECORD_TYPE="${DDNS_RECORD_TYPE:-$RECORD_TYPE}"
-INTERVAL="${DDNS_INTERVAL:-$INTERVAL}"
+# Config file values
+[ -z "${DDNS_PROVIDER+x}" ] || PROVIDER="$DDNS_PROVIDER"
+[ -z "${DDNS_DOMAIN+x}" ] || DOMAIN="$DDNS_DOMAIN"
+[ -z "${DDNS_TOKEN+x}" ] || TOKEN="$DDNS_TOKEN"
+[ -z "${DDNS_ZONE_ID+x}" ] || ZONE_ID="$DDNS_ZONE_ID"
+[ -z "${DDNS_RECORD_TYPE+x}" ] || RECORD_TYPE="$DDNS_RECORD_TYPE"
+[ -z "${DDNS_INTERVAL+x}" ] || INTERVAL="$DDNS_INTERVAL"
+[ -z "${DDNS_MODE+x}" ] || MODE="$DDNS_MODE"
+[ -z "${DDNS_FORCE+x}" ] || FORCE="$DDNS_FORCE"
+
+# Caller environment overrides config file
+[ -z "$ENV_PROVIDER" ] || PROVIDER="$ENV_PROVIDER"
+[ -z "$ENV_DOMAIN" ] || DOMAIN="$ENV_DOMAIN"
+[ -z "$ENV_TOKEN" ] || TOKEN="$ENV_TOKEN"
+[ -z "$ENV_ZONE_ID" ] || ZONE_ID="$ENV_ZONE_ID"
+[ -z "$ENV_RECORD_TYPE" ] || RECORD_TYPE="$ENV_RECORD_TYPE"
+[ -z "$ENV_INTERVAL" ] || INTERVAL="$ENV_INTERVAL"
+[ -z "$ENV_MODE" ] || MODE="$ENV_MODE"
+[ -z "$ENV_FORCE" ] || FORCE="$ENV_FORCE"
 
 # ANSI Colors
 CYAN='\033[0;36m'
@@ -302,14 +324,62 @@ run_check() {
 }
 
 # Quick Setup Config Action
+select_provider_tui() {
+    p_sel=0
+    [ "${PROVIDER:-cloudflare}" = "duckdns" ] && p_sel=1
+    old_stty=$(stty -g 2>/dev/null || true)
+    stty -echo -icanon min 1 time 0 2>/dev/null || true
+    printf "\033[?25l" >&2
+    while true; do
+        printf "\033[H\033[2J" >&2
+        printf "%b=== Select DNS Provider ===%b\n\n" "${CYAN}${BOLD}" "${NC}" >&2
+        if [ "$p_sel" -eq 0 ]; then
+            printf "  %b★ Cloudflare%b\n" "${REVERSE}${BOLD}" "${NC}" >&2
+            printf "  %b  DuckDNS   %b\n" "${DIM}" "${NC}" >&2
+        else
+            printf "  %b  Cloudflare%b\n" "${DIM}" "${NC}" >&2
+            printf "  %b★ DuckDNS   %b\n" "${REVERSE}${BOLD}" "${NC}" >&2
+        fi
+        printf "\n%b[Use Up/Down Arrow or k/j, Enter to Select]%b\n" "${DIM}" "${NC}" >&2
+
+        key=$(dd bs=1 count=1 2>/dev/null || true)
+        if [ "$key" = "$(printf '\033')" ]; then
+            stty -echo -icanon min 0 time 1 2>/dev/null || true
+            k2=$(dd bs=1 count=1 2>/dev/null || true)
+            k3=$(dd bs=1 count=1 2>/dev/null || true)
+            stty -echo -icanon min 1 time 0 2>/dev/null || true
+            if [ "$k2" = "[" ]; then
+                case "$k3" in
+                    A|B) p_sel=$((1 - p_sel)) ;;
+                esac
+            fi
+        elif [ "$key" = "j" ] || [ "$key" = "k" ]; then
+            p_sel=$((1 - p_sel))
+        elif [ -z "$key" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
+            break
+        fi
+    done
+    stty "$old_stty" 2>/dev/null || stty sane 2>/dev/null || true
+    printf "\033[?25h\033[H\033[2J" >&2
+    if [ "$p_sel" -eq 0 ]; then
+        echo "cloudflare"
+    else
+        echo "duckdns"
+    fi
+}
+
 quick_setup() {
     echo ""
     printf "%b=== NODEX Quick Credentials Setup ===%b\n\n" "${CYAN}${BOLD}" "${NC}"
 
     current_p="${PROVIDER:-cloudflare}"
-    printf "Provider (cloudflare | duckdns) [%s]: " "$current_p"
-    read input_provider || true
-    provider_val="${input_provider:-$current_p}"
+    if [ -t 0 ]; then
+        provider_val=$(select_provider_tui)
+    else
+        printf "Provider (cloudflare | duckdns) [%s]: " "$current_p"
+        read input_provider || true
+        provider_val="${input_provider:-$current_p}"
+    fi
 
     printf "Domain / FQDN [%s]: " "${DOMAIN:-}"
     read input_domain || true
@@ -327,7 +397,7 @@ quick_setup() {
     fi
 
     target_config=""
-    if [ -w "/etc/default" ] || [ "$(id -u)" -eq 0 ]; then
+    if [ -w "/etc/default" ] || [ "$(id -u 2>/dev/null || echo 1)" -eq 0 ]; then
         target_config="/etc/default/nodex"
     else
         mkdir -p "$CONFIG_DIR"
@@ -398,7 +468,7 @@ uninstall_nodex() {
                 systemctl disable --now nodex 2>/dev/null || true
                 rm -f /etc/systemd/system/nodex.service 2>/dev/null || true
             fi
-            rm -f /usr/local/bin/nodex /usr/local/bin/modex 2>/dev/null || true
+            rm -f /usr/local/bin/nodex /usr/local/bin/modex "${HOME:-}/.local/bin/nodex" "${HOME:-}/.local/bin/modex" 2>/dev/null || true
             rm -f "$CONFIG_FILE" "$GLOBAL_CONFIG" 2>/dev/null || true
             rm -f /tmp/ddns_*.cache 2>/dev/null || true
             printf "%b✓ NODEX uninstalled cleanly.%b\n" "${GREEN}" "${NC}"
@@ -422,8 +492,6 @@ tui_menu() {
 
     selected=0
     menu_items="Sync DNS Now (One-Shot Trigger);Start Background Daemon;Quick Setup / Configure Credentials;Inspect Status & Cache Logs;Uninstall NODEX;Exit"
-
-    current_ip="Checking..."
 
     stty -echo -icanon min 1 time 0 2>/dev/null || true
     printf "\033[?25l" # Hide cursor
