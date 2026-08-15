@@ -468,8 +468,24 @@ uninstall_nodex() {
                 systemctl disable --now nodex 2>/dev/null || true
                 rm -f /etc/systemd/system/nodex.service 2>/dev/null || true
             fi
-            rm -f /usr/local/bin/nodex /usr/local/bin/modex "${HOME:-}/.local/bin/nodex" "${HOME:-}/.local/bin/modex" 2>/dev/null || true
-            rm -f "$CONFIG_FILE" "$GLOBAL_CONFIG" 2>/dev/null || true
+
+            # Detect path where running script or installed binary lives
+            self_path=""
+            if command -v nodex >/dev/null 2>&1; then
+                self_path=$(command -v nodex 2>/dev/null || true)
+            fi
+
+            # Remove binaries across all potential user/system locations
+            rm -f /usr/local/bin/nodex /usr/local/bin/modex \
+                  /usr/bin/nodex /usr/bin/modex \
+                  "${HOME:-}/.local/bin/nodex" "${HOME:-}/.local/bin/modex" \
+                  "${PREFIX:-}/bin/nodex" "${PREFIX:-}/bin/modex" 2>/dev/null || true
+
+            if [ -n "$self_path" ] && [ -f "$self_path" ]; then
+                rm -f "$self_path" 2>/dev/null || true
+            fi
+
+            rm -rf "$CONFIG_DIR" "$GLOBAL_CONFIG" 2>/dev/null || true
             rm -f /tmp/ddns_*.cache 2>/dev/null || true
             printf "%b✓ NODEX uninstalled cleanly.%b\n" "${GREEN}" "${NC}"
             exit 0
