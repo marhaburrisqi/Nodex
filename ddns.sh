@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-CURRENT_VERSION="1.0.1"
+CURRENT_VERSION="1.0.2"
 BUILD_HASH="dev"
 
 # Baseline defaults
@@ -558,11 +558,7 @@ tui_menu() {
 
     if [ "$REMOTE_VERSION" != "$CURRENT_VERSION" ]; then
         has_update=1
-        if [ -n "$REMOTE_HASH" ]; then
-            update_label="v${REMOTE_VERSION} (${REMOTE_HASH})"
-        else
-            update_label="v${REMOTE_VERSION}"
-        fi
+        update_label="${REMOTE_VERSION}"
     elif [ "$local_hash" != "dev" ] && [ -n "$REMOTE_HASH" ] && [ "$REMOTE_HASH" != "$local_hash" ]; then
         has_update=1
         update_label="${REMOTE_HASH}"
@@ -597,7 +593,7 @@ tui_menu() {
 
         printf "+----------------------------------------------------------+\n"
         if [ "$has_update" -eq 1 ]; then
-            title_text="NODEX Gateway (v${CURRENT_VERSION}) -> Update Available: ${update_label}"
+            title_text="NODEX Gateway (v${CURRENT_VERSION}) -> Update: ${update_label}"
             printf "| %b%-56s%b |\n" "${YELLOW}${BOLD}" "$title_text" "${NC}"
         else
             title_text="NODEX Gateway (v${CURRENT_VERSION})"
