@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+CURRENT_VERSION="1.0.0"
+
 # Baseline defaults
 PROVIDER="cloudflare"
 DOMAIN=""
@@ -110,9 +112,31 @@ Options:
   --daemon                Run continuously in daemon mode
   --force                 Ignore cache and force DNS update
   --dry-run               Output parsed parameters and exit
+  -u, --update            Update NODEX to the latest version
   -h, --help              Show this help message
 EOF
     exit 0
+}
+
+perform_self_update() {
+    log "Checking for updates and updating NODEX..."
+    RAW_INSTALL_URL="https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/install.sh"
+    if curl -fsSL --max-time 15 "$RAW_INSTALL_URL" | sh; then
+        log_box "NODEX Update" "${GREEN}SUCCESS${NC}" "NODEX updated successfully."
+        exit 0
+    else
+        log_box "NODEX Update" "${RED}FAILED${NC}" "Update failed. Check network connectivity."
+        return 1
+    fi
+}
+
+get_remote_version() {
+    remote_ver=$(curl -fsSL --max-time 2 https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/ddns.sh 2>/dev/null | grep '^CURRENT_VERSION=' | head -n 1 | cut -d'"' -f2 || true)
+    if [ -z "$remote_ver" ]; then
+        echo "$CURRENT_VERSION"
+    else
+        echo "$remote_ver"
+    fi
 }
 
 HAS_ARGS=0
@@ -147,6 +171,7 @@ while [ $# -gt 0 ]; do
             [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
             TEST_IP="$2"; shift 2 ;;
         --dry-run-update) DRY_RUN_UPDATE=1; shift ;;
+        -u|--update) perform_self_update ;;
         -h|--help) usage ;;
         *) echo "Error: Unknown argument $1" >&2; exit 1 ;;
     esac
@@ -334,30 +359,39 @@ select_provider_tui() {
         printf "\033[H\033[2J" >&2
         printf "%b=== Select DNS Provider ===%b\n\n" "${CYAN}${BOLD}" "${NC}" >&2
         if [ "$p_sel" -eq 0 ]; then
-            printf "  %b★ Cloudflare%b\n" "${REVERSE}${BOLD}" "${NC}" >&2
-            printf "  %b  DuckDNS   %b\n" "${DIM}" "${NC}" >&2
+            printf "%b> 1. Cloudflare%b\n" "${CYAN}${BOLD}" "${NC}" >&2
+            printf "  2. DuckDNS   \n" >&2
         else
-            printf "  %b  Cloudflare%b\n" "${DIM}" "${NC}" >&2
-            printf "  %b★ DuckDNS   %b\n" "${REVERSE}${BOLD}" "${NC}" >&2
+            printf "  1. Cloudflare\n" >&2
+            printf "%b> 2. DuckDNS   %b\n" "${CYAN}${BOLD}" "${NC}" >&2
         fi
-        printf "\n%b[Use Up/Down Arrow or k/j, Enter to Select]%b\n" "${DIM}" "${NC}" >&2
+        printf "\n----------------------------------------\n" >&2
+        printf "[Up/Down] Navigate  |  [Enter] Select\n" >&2
 
         key=$(dd bs=1 count=1 2>/dev/null || true)
+        action=0
         if [ "$key" = "$(printf '\033')" ]; then
             stty -echo -icanon min 0 time 1 2>/dev/null || true
             k2=$(dd bs=1 count=1 2>/dev/null || true)
-            k3=$(dd bs=1 count=1 2>/dev/null || true)
-            stty -echo -icanon min 1 time 0 2>/dev/null || true
-            if [ "$k2" = "[" ]; then
-                case "$k3" in
-                    A|B) p_sel=$((1 - p_sel)) ;;
-                esac
+            k3=""
+            if [ "$k2" = "[" ] || [ "$k2" = "O" ]; then
+                k3=$(dd bs=1 count=1 2>/dev/null || true)
             fi
-        elif [ "$key" = "j" ] || [ "$key" = "k" ]; then
+            stty -echo -icanon min 1 time 0 2>/dev/null || true
+            case "$k3" in
+                A|B|C|D) p_sel=$((1 - p_sel)) ;;
+            esac
+        elif [ "$key" = "j" ] || [ "$key" = "k" ] || [ "$key" = "w" ] || [ "$key" = "s" ]; then
             p_sel=$((1 - p_sel))
+        elif [ "$key" = "1" ]; then
+            p_sel=0; action=1
+        elif [ "$key" = "2" ]; then
+            p_sel=1; action=1
         elif [ -z "$key" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
-            break
+            action=1
         fi
+
+        [ "$action" -eq 1 ] && break
     done
     stty "$old_stty" 2>/dev/null || stty sane 2>/dev/null || true
     printf "\033[?25h\033[H\033[2J" >&2
@@ -503,11 +537,25 @@ tui_menu() {
     cleanup_tui() {
         stty "$OLD_STTY" 2>/dev/null || stty sane 2>/dev/null || true
         printf "\033[?25h"
+        exit 0
     }
     trap cleanup_tui INT TERM EXIT
 
     selected=0
-    menu_items="Sync DNS Now (One-Shot Trigger);Start Background Daemon;Quick Setup / Configure Credentials;Inspect Status & Cache Logs;Uninstall NODEX;Exit"
+    remote_ver=$(get_remote_version)
+
+    has_update=0
+    if [ "$remote_ver" != "$CURRENT_VERSION" ]; then
+        has_update=1
+        menu_items="* Update to v${remote_ver} (current: v${CURRENT_VERSION});1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
+        total_items=7
+    else
+        menu_items="1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
+        total_items=6
+    fi
+
+    # Pre-fetch public IP once before entering loop so screen redraws don't block
+    cached_tui_ip=$(get_public_ip 2>/dev/null || echo "")
 
     stty -echo -icanon min 1 time 0 2>/dev/null || true
     printf "\033[?25l" # Hide cursor
@@ -515,59 +563,107 @@ tui_menu() {
     while true; do
         printf "\033[H\033[2J" # Clear screen smoothly
 
-        printf "%b============================================================%b\n" "${CYAN}" "${NC}"
-        printf "%b  NODEX Gateway (v1.0.0)%b\n" "${BOLD}" "${NC}"
-        printf "  📡 Provider  : %b%s%b\n" "${GREEN}" "${PROVIDER:-None}" "${NC}"
-        printf "  🌐 Target    : %b%s%b\n" "${GREEN}" "${DOMAIN:-Not Configured}" "${NC}"
-        printf "%b============================================================%b\n\n" "${CYAN}" "${NC}"
+        # Color & raw value evaluation for header fields
+        prov_val="${PROVIDER:-None}"
+        if [ "$prov_val" = "None" ]; then prov_color="$YELLOW"; else prov_color="$GREEN"; fi
+
+        dom_val="${DOMAIN:-Not Configured}"
+        if [ "$dom_val" = "Not Configured" ]; then dom_color="$YELLOW"; else dom_color="$GREEN"; fi
+
+        ip_val="${cached_tui_ip:-Not Available}"
+        if [ "$ip_val" = "Not Available" ]; then ip_color="$YELLOW"; else ip_color="$GREEN"; fi
+
+        printf "+----------------------------------------------------------+\n"
+        if [ "$has_update" -eq 1 ]; then
+            title_text="NODEX Gateway (v${CURRENT_VERSION}) -> Update Available: v${remote_ver}"
+            printf "| %b%-56s%b |\n" "${YELLOW}${BOLD}" "$title_text" "${NC}"
+        else
+            title_text="NODEX Gateway (v${CURRENT_VERSION})"
+            printf "| %b%-56s%b |\n" "${CYAN}${BOLD}" "$title_text" "${NC}"
+        fi
+        printf "| Provider  : %b%-44s%b |\n" "$prov_color" "$prov_val" "${NC}"
+        printf "| Target    : %b%-44s%b |\n" "$dom_color" "$dom_val" "${NC}"
+        printf "| Public IP : %b%-44s%b |\n" "$ip_color" "$ip_val" "${NC}"
+        printf "+----------------------------------------------------------+\n\n"
 
         idx=0
         old_ifs="$IFS"
         IFS=";"
         for item in $menu_items; do
             if [ "$idx" -eq "$selected" ]; then
-                printf "  %b★ %-40s%b\n" "${REVERSE}${BOLD}" "$item" "${NC}"
+                if [ "$has_update" -eq 1 ] && [ "$idx" -eq 0 ]; then
+                    printf "%b> %s%b\n" "${YELLOW}${BOLD}" "$item" "${NC}"
+                else
+                    printf "%b> %s%b\n" "${CYAN}${BOLD}" "$item" "${NC}"
+                fi
             else
-                printf "  %b  %-40s%b\n" "${DIM}" "$item" "${NC}"
+                if [ "$has_update" -eq 1 ] && [ "$idx" -eq 0 ]; then
+                    printf "  %b%s%b\n" "${YELLOW}" "$item" "${NC}"
+                else
+                    printf "  %s\n" "$item"
+                fi
             fi
             idx=$((idx + 1))
         done
         IFS="$old_ifs"
 
-        printf "\n%b[Use Up/Down Arrow or k/j, Enter to Select, q to Exit]%b\n" "${DIM}" "${NC}"
+        printf "\n----------------------------------------\n"
+        printf "[Up/Down] Navigate  |  [Enter] Select  |  [q] Quit\n"
 
         key=$(dd bs=1 count=1 2>/dev/null || true)
+        action=0
 
         if [ "$key" = "$(printf '\033')" ]; then
             stty -echo -icanon min 0 time 1 2>/dev/null || true
             k2=$(dd bs=1 count=1 2>/dev/null || true)
-            k3=$(dd bs=1 count=1 2>/dev/null || true)
-            stty -echo -icanon min 1 time 0 2>/dev/null || true
-            if [ "$k2" = "[" ]; then
-                case "$k3" in
-                    A) selected=$(( (selected - 1 + 6) % 6 )) ;; # Up
-                    B) selected=$(( (selected + 1) % 6 )) ;;     # Down
-                esac
+            k3=""
+            if [ "$k2" = "[" ] || [ "$k2" = "O" ]; then
+                k3=$(dd bs=1 count=1 2>/dev/null || true)
             fi
-        elif [ "$key" = "k" ] || [ "$key" = "K" ]; then
-            selected=$(( (selected - 1 + 6) % 6 ))
-        elif [ "$key" = "j" ] || [ "$key" = "J" ]; then
-            selected=$(( (selected + 1) % 6 ))
+            stty -echo -icanon min 1 time 0 2>/dev/null || true
+            case "$k3" in
+                A) selected=$(( (selected - 1 + total_items) % total_items )) ;; # Up
+                B) selected=$(( (selected + 1) % total_items )) ;;               # Down
+            esac
+        elif [ "$key" = "k" ] || [ "$key" = "K" ] || [ "$key" = "w" ] || [ "$key" = "W" ]; then
+            selected=$(( (selected - 1 + total_items) % total_items ))
+        elif [ "$key" = "j" ] || [ "$key" = "J" ] || [ "$key" = "s" ] || [ "$key" = "S" ]; then
+            selected=$(( (selected + 1) % total_items ))
+        elif [ "$key" = "1" ]; then selected=0; action=1
+        elif [ "$key" = "2" ]; then selected=1; action=1
+        elif [ "$key" = "3" ]; then selected=2; action=1
+        elif [ "$key" = "4" ]; then selected=3; action=1
+        elif [ "$key" = "5" ]; then selected=4; action=1
+        elif [ "$key" = "6" ]; then selected=5; action=1
         elif [ "$key" = "q" ] || [ "$key" = "Q" ]; then
             cleanup_tui
-            printf "\033[H\033[2J"
-            exit 0
         elif [ -z "$key" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
-            cleanup_tui
-            printf "\033[H\033[2J"
-            case "$selected" in
-                0) FORCE=1; run_check; printf "\nPress Enter to return to menu..."; read _ || true ;;
-                1) MODE="daemon"; main ;;
-                2) quick_setup ;;
-                3) inspect_status ;;
-                4) uninstall_nodex ;;
-                5) exit 0 ;;
-            esac
+            action=1
+        fi
+
+        if [ "$action" -eq 1 ]; then
+            stty "$OLD_STTY" 2>/dev/null || stty sane 2>/dev/null || true
+            printf "\033[?25h\033[H\033[2J"
+            if [ "$has_update" -eq 1 ]; then
+                case "$selected" in
+                    0) perform_self_update ;;
+                    1) FORCE=1; run_check; printf "\nPress Enter to return to menu..."; read _ || true ;;
+                    2) MODE="daemon"; main ;;
+                    3) quick_setup; cached_tui_ip=$(get_public_ip 2>/dev/null || echo "") ;;
+                    4) inspect_status ;;
+                    5) uninstall_nodex ;;
+                    6) exit 0 ;;
+                esac
+            else
+                case "$selected" in
+                    0) FORCE=1; run_check; printf "\nPress Enter to return to menu..."; read _ || true ;;
+                    1) MODE="daemon"; main ;;
+                    2) quick_setup; cached_tui_ip=$(get_public_ip 2>/dev/null || echo "") ;;
+                    3) inspect_status ;;
+                    4) uninstall_nodex ;;
+                    5) exit 0 ;;
+                esac
+            fi
             stty -echo -icanon min 1 time 0 2>/dev/null || true
             printf "\033[?25l"
         fi
