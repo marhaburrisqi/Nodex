@@ -1,6 +1,6 @@
 # NODEX 🌐
 
-> Zero-dependency, ultra-lightweight Dynamic DNS (DDNS) automation tool and interactive router-style TUI for Cloudflare and DuckDNS. Designed for POSIX shells (`/bin/sh`), Linux, Android (Termux), macOS, and Windows (CMD/PowerShell).
+> Zero-dependency, ultra-lightweight Dynamic DNS (DDNS) automation tool and interactive router-style TUI supporting **Cloudflare, DuckDNS, Dynu, deSEC, AWS Route 53, and Google Cloud DNS**. Designed for POSIX shells (`/bin/sh`), Linux, Android (Termux), macOS, and Windows (CMD/PowerShell).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![POSIX Compliant](https://img.shields.io/badge/shell-POSIX%20compliant-blue.svg)](https://pubs.opengroup.org/onlinepubs/9699919799/)
@@ -78,20 +78,21 @@ curl -fsSL https://raw.githubusercontent.com/marhaburrisqi/Nodex/main/ddns.sh | 
 Running `nodex` without arguments in an interactive terminal opens the TUI Router interface:
 
 ```text
-============================================================
-  NODEX Gateway (v1.0.0)
-  📡 Provider  : cloudflare
-  🌐 Target    : home.example.com
-============================================================
+ _  _   ___   ___   ___  __  __
+| \| | / _ \ |   \ | __| \ \/ /    cloudflare // home.example.com
+| .  || (_) || |) || _|   >  <     125.166.118.234 • ● ACTIVE • v1.3.2
+|_|\_| \___/ |___/ |___| /_/\_\
+──────────────────────────────────────────────────────────
 
-  ★ Sync DNS Now (One-Shot Trigger)
-    Start Background Daemon
-    Quick Setup / Configure Credentials
-    Inspect Status & Cache Logs
-    Uninstall NODEX
-    Exit
+  ▎ ◆  Sync DNS Pipeline
+    ◇  Daemon Service
+    ◇  Gateway Config
+    ◇  Telemetry & Logs
+    ◇  Uninstall NODEX
+    ◇  Exit Console
 
-[Use Up/Down Arrow or k/j, Enter to Select, q to Exit]
+──────────────────────────────────────────────────────────
+  [↑/↓] Navigate  •  [Enter] Execute  •  [q] Quit
 ```
 
 ---
@@ -104,15 +105,17 @@ nodex [OPTIONS]
 
 | Option | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `-p, --provider <name>` | `DDNS_PROVIDER` | `cloudflare` | DNS Provider (`cloudflare` or `duckdns`) |
+| `-p, --provider <name>` | `DDNS_PROVIDER` | `cloudflare` | DNS Provider (`cloudflare`, `duckdns`, `dynu`, `desec`, `route53`, `gcp`) |
 | `-d, --domain <fqdn>` | `DDNS_DOMAIN` | *(Required)* | Target domain / hostname to update |
-| `-t, --token <token>` | `DDNS_TOKEN` | *(Required)* | API token (Cloudflare API token or DuckDNS token) |
-| `-z, --zone <zone_id>` | `DDNS_ZONE_ID` | - | Cloudflare Zone ID (Required for Cloudflare) |
+| `-t, --token <token>` | `DDNS_TOKEN` | *(Required)* | API token (Bearer / Token / API Key) |
+| `-z, --zone <zone_id>` | `DDNS_ZONE_ID` | - | Zone ID / Hosted Zone ID / Managed Zone (Cloudflare, Route 53, GCP, deSEC) |
+| `--project-id <id>` | `DDNS_PROJECT_ID` | - | Google Cloud Project ID (Required for GCP) |
 | `-type, --record-type` | `DDNS_RECORD_TYPE` | `A` | DNS record type (`A` for IPv4, `AAAA` for IPv6) |
 | `-i, --interval <sec>` | `DDNS_INTERVAL` | `300` | Polling interval in seconds for daemon mode |
 | `--daemon` | `DDNS_MODE=daemon` | `once` | Run continuously in background loop |
 | `--force` | `DDNS_FORCE=1` | `0` | Ignore local cache and force API update |
 | `--dry-run` | - | - | Display parsed parameters and exit |
+| `-u, --update` | - | - | Update NODEX to the latest version |
 | `-h, --help` | - | - | Show usage guide |
 
 ---

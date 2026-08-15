@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-CURRENT_VERSION="1.0.2"
+CURRENT_VERSION="1.3.2"
 BUILD_HASH="dev"
 
 # Baseline defaults
@@ -9,11 +9,13 @@ PROVIDER="cloudflare"
 DOMAIN=""
 TOKEN=""
 ZONE_ID=""
+PROJECT_ID=""
 RECORD_TYPE="A"
 INTERVAL="300"
 MODE="once"
 FORCE=0
 DRY_RUN=0
+NO_INTRO=0
 TEST_IP=""
 DRY_RUN_UPDATE=0
 
@@ -22,10 +24,12 @@ ENV_PROVIDER="${DDNS_PROVIDER-}"
 ENV_DOMAIN="${DDNS_DOMAIN-}"
 ENV_TOKEN="${DDNS_TOKEN-}"
 ENV_ZONE_ID="${DDNS_ZONE_ID-}"
+ENV_PROJECT_ID="${DDNS_PROJECT_ID-}"
 ENV_RECORD_TYPE="${DDNS_RECORD_TYPE-}"
 ENV_INTERVAL="${DDNS_INTERVAL-}"
 ENV_MODE="${DDNS_MODE-}"
 ENV_FORCE="${DDNS_FORCE-}"
+ENV_NO_INTRO="${NODEX_NO_INTRO-}"
 
 # Config File Paths
 CONFIG_DIR="${HOME:-/root}/.config/nodex"
@@ -44,29 +48,35 @@ fi
 [ -z "${DDNS_DOMAIN+x}" ] || DOMAIN="$DDNS_DOMAIN"
 [ -z "${DDNS_TOKEN+x}" ] || TOKEN="$DDNS_TOKEN"
 [ -z "${DDNS_ZONE_ID+x}" ] || ZONE_ID="$DDNS_ZONE_ID"
+[ -z "${DDNS_PROJECT_ID+x}" ] || PROJECT_ID="$DDNS_PROJECT_ID"
 [ -z "${DDNS_RECORD_TYPE+x}" ] || RECORD_TYPE="$DDNS_RECORD_TYPE"
 [ -z "${DDNS_INTERVAL+x}" ] || INTERVAL="$DDNS_INTERVAL"
 [ -z "${DDNS_MODE+x}" ] || MODE="$DDNS_MODE"
 [ -z "${DDNS_FORCE+x}" ] || FORCE="$DDNS_FORCE"
+[ -z "${NODEX_NO_INTRO+x}" ] || NO_INTRO="$NODEX_NO_INTRO"
 
 # Caller environment overrides config file
 [ -z "$ENV_PROVIDER" ] || PROVIDER="$ENV_PROVIDER"
 [ -z "$ENV_DOMAIN" ] || DOMAIN="$ENV_DOMAIN"
 [ -z "$ENV_TOKEN" ] || TOKEN="$ENV_TOKEN"
 [ -z "$ENV_ZONE_ID" ] || ZONE_ID="$ENV_ZONE_ID"
+[ -z "$ENV_PROJECT_ID" ] || PROJECT_ID="$ENV_PROJECT_ID"
 [ -z "$ENV_RECORD_TYPE" ] || RECORD_TYPE="$ENV_RECORD_TYPE"
 [ -z "$ENV_INTERVAL" ] || INTERVAL="$ENV_INTERVAL"
 [ -z "$ENV_MODE" ] || MODE="$ENV_MODE"
 [ -z "$ENV_FORCE" ] || FORCE="$ENV_FORCE"
+[ -z "$ENV_NO_INTRO" ] || NO_INTRO="$ENV_NO_INTRO"
 
-# ANSI Colors
+# ANSI Colors & Formatting
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
+WHITE='\033[1;37m'
 BOLD='\033[1m'
 DIM='\033[2m'
+GRAY='\033[90m'
 REVERSE='\033[7m'
 NC='\033[0m'
 
@@ -90,12 +100,18 @@ log_box() {
     status="$2"
     details="$3"
 
-    printf "%b┌────────────────────────────────────────────────────────┐%b\n" "${BLUE}" "${NC}"
-    printf "%b│%b %b%-54s%b %b│%b\n" "${BLUE}" "${NC}" "${BOLD}" "$title" "${NC}" "${BLUE}" "${NC}"
-    printf "%b├────────────────────────────────────────────────────────┤%b\n" "${BLUE}" "${NC}"
-    printf "%b│%b Status:  %-46b %b│%b\n" "${BLUE}" "${NC}" "$status" "${BLUE}" "${NC}"
-    printf "%b│%b Details: %-46b %b│%b\n" "${BLUE}" "${NC}" "$details" "${BLUE}" "${NC}"
-    printf "%b└────────────────────────────────────────────────────────┘%b\n" "${BLUE}" "${NC}"
+    case "$status" in
+        *SUCCESS*)
+            printf "  %b✔%b %b%s%b\n" "${GREEN}" "${NC}" "${WHITE}" "$title" "${NC}"
+            printf "    %bStatus%b  : %b\n" "${GRAY}" "${NC}" "$status"
+            printf "    %bDetails%b : %b%s%b\n" "${GRAY}" "${NC}" "${GRAY}" "$details" "${NC}"
+            ;;
+        *)
+            printf "  %b✖%b %b%s%b\n" "${RED}" "${NC}" "${WHITE}" "$title" "${NC}"
+            printf "    %bStatus%b  : %b\n" "${GRAY}" "${NC}" "$status"
+            printf "    %bDetails%b : %b%s%b\n" "${GRAY}" "${NC}" "${GRAY}" "$details" "${NC}"
+            ;;
+    esac
 }
 
 usage() {
@@ -104,14 +120,16 @@ usage() {
 Usage: nodex [OPTIONS]
 
 Options:
-  -p, --provider <name>   DNS Provider (cloudflare | duckdns) [default: cloudflare]
+  -p, --provider <name>   DNS Provider (cloudflare | duckdns | dynu | desec | route53 | gcp) [default: cloudflare]
   -d, --domain <fqdn>     Domain / Hostname to update
-  -t, --token <token>     API token (Cloudflare API token or DuckDNS token)
-  -z, --zone <zone_id>    Cloudflare Zone ID (required for Cloudflare)
+  -t, --token <token>     API token (Bearer / Token / Key)
+  -z, --zone <zone_id>    Zone ID / Hosted Zone ID / Managed Zone
+  --project-id <id>       Google Cloud Project ID (required for GCP)
   -type, --record-type <A|AAAA> DNS record type [default: A]
   -i, --interval <sec>    Check interval for daemon mode [default: 300]
   --daemon                Run continuously in daemon mode
   --force                 Ignore cache and force DNS update
+  --no-intro              Skip micro-boot intro animation
   --dry-run               Output parsed parameters and exit
   -u, --update            Update NODEX to the latest version
   -h, --help              Show this help message
@@ -166,6 +184,9 @@ while [ $# -gt 0 ]; do
         -z|--zone)
             [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
             ZONE_ID="$2"; shift 2 ;;
+        --project-id)
+            [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
+            PROJECT_ID="$2"; shift 2 ;;
         -type|--record-type)
             [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
             RECORD_TYPE="$2"; shift 2 ;;
@@ -174,6 +195,7 @@ while [ $# -gt 0 ]; do
             INTERVAL="$2"; shift 2 ;;
         --daemon) MODE="daemon"; shift ;;
         --force) FORCE=1; shift ;;
+        --no-intro) NO_INTRO=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         --test-ip)
             [ $# -ge 2 ] || { echo "Error: $1 requires an argument" >&2; exit 1; }
@@ -203,16 +225,18 @@ get_public_ip() {
 
     ip=""
     # 1. ipify
-    ip=$(curl -s $ip_flag --max-time 5 https://api.ipify.org 2>/dev/null || true)
+    ip=$(curl -s $ip_flag --connect-timeout 5 --max-time 15 --retry 1 --compressed https://api.ipify.org 2>/dev/null || true)
 
     # 2. icanhazip fallback
     if [ -z "$ip" ]; then
-        ip=$(curl -s $ip_flag --max-time 5 https://icanhazip.com 2>/dev/null | tr -d ' \n\r' || true)
+        raw_ip=$(curl -s $ip_flag --connect-timeout 5 --max-time 15 --retry 1 --compressed https://icanhazip.com 2>/dev/null || true)
+        ip=$(echo "$raw_ip" | tr -d ' \n\r')
     fi
 
     # 3. ifconfig.me fallback
     if [ -z "$ip" ]; then
-        ip=$(curl -s $ip_flag --max-time 5 https://ifconfig.me/ip 2>/dev/null | tr -d ' \n\r' || true)
+        raw_ip=$(curl -s $ip_flag --connect-timeout 5 --max-time 15 --retry 1 --compressed https://ifconfig.me/ip 2>/dev/null || true)
+        ip=$(echo "$raw_ip" | tr -d ' \n\r')
     fi
 
     if [ -z "$ip" ]; then
@@ -224,8 +248,9 @@ get_public_ip() {
 }
 
 get_cache_file() {
+    cache_dir="${TMPDIR:-/tmp}"
     clean_domain=$(echo "$DOMAIN" | tr '/:' '_')
-    echo "/tmp/ddns_${clean_domain}_${RECORD_TYPE}.cache"
+    echo "${cache_dir}/ddns_${clean_domain}_${RECORD_TYPE}.cache"
 }
 
 is_ip_changed() {
@@ -256,10 +281,10 @@ update_duckdns() {
     ip="$1"
     log "Updating DuckDNS record ${BOLD}$DOMAIN${NC} to ${GREEN}$ip${NC}..."
 
-    # DuckDNS domains argument usually drops .duckdns.org suffix if passed
-    subdomain=$(echo "$DOMAIN" | sed 's/\.duckdns\.org$//')
+    # Pure POSIX suffix stripping without sed/forks
+    subdomain="${DOMAIN%.duckdns.org}"
 
-    response=$(curl -sL --max-time 15 "https://www.duckdns.org/update?domains=${subdomain}&token=${TOKEN}&ip=${ip}")
+    response=$(curl -sL --connect-timeout 5 --max-time 15 --retry 1 --compressed "https://www.duckdns.org/update?domains=${subdomain}&token=${TOKEN}&ip=${ip}")
 
     if [ "$response" = "OK" ]; then
         log_box "DuckDNS Sync Result" "${GREEN}SUCCESS${NC}" "Record updated to $ip"
@@ -268,6 +293,123 @@ update_duckdns() {
         log_box "DuckDNS Sync Result" "${RED}FAILED${NC}" "Response: $response"
         return 1
     fi
+}
+
+update_dynu() {
+    ip="$1"
+    log "Updating Dynu record ${BOLD}$DOMAIN${NC} to ${GREEN}$ip${NC}..."
+
+    ip_param="myip"
+    [ "$RECORD_TYPE" = "AAAA" ] && ip_param="myipv6"
+
+    # Dynu accepts Basic Auth (-u username:password or token:token) or query/header
+    response=$(curl -sL --connect-timeout 5 --max-time 15 --retry 1 --compressed -u "${TOKEN}:${TOKEN}" \
+        "https://api.dynu.com/nic/update?hostname=${DOMAIN}&${ip_param}=${ip}")
+
+    case "$response" in
+        *good*|*nochg*)
+            log_box "Dynu Sync Result" "${GREEN}SUCCESS${NC}" "Record updated: $response"
+            return 0
+            ;;
+        *)
+            log_box "Dynu Sync Result" "${RED}FAILED${NC}" "Response: $response"
+            return 1
+            ;;
+    esac
+}
+
+update_desec() {
+    ip="$1"
+    log "Updating deSEC record ${BOLD}$DOMAIN${NC} (${BOLD}$RECORD_TYPE${NC}) to ${GREEN}$ip${NC}..."
+
+    domain_zone="${ZONE_ID:-$DOMAIN}"
+    subdomain=""
+    if [ "$DOMAIN" = "$domain_zone" ]; then
+        subdomain="@"
+    else
+        subdomain="${DOMAIN%."$domain_zone"}"
+        [ "$subdomain" = "$DOMAIN" ] && subdomain="@"
+    fi
+
+    desec_url="https://desec.io/api/v1/domains/${domain_zone}/rrsets/${subdomain}/${RECORD_TYPE}/"
+    [ "$subdomain" = "@" ] && desec_url="https://desec.io/api/v1/domains/${domain_zone}/rrsets/.../${RECORD_TYPE}/"
+
+    response=$(curl -s --connect-timeout 5 --max-time 15 --retry 1 --compressed -X PUT "$desec_url" \
+        -H "Authorization: Token ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data "{\"records\":[\"${ip}\"],\"ttl\":300}")
+
+    case "$response" in
+        *"records"*|*"created"*|*"\"name\""*)
+            log_box "deSEC Sync Result" "${GREEN}SUCCESS${NC}" "Record updated to $ip"
+            return 0
+            ;;
+        *)
+            log_box "deSEC Sync Result" "${RED}FAILED${NC}" "Response: $response"
+            return 1
+            ;;
+    esac
+}
+
+update_route53() {
+    ip="$1"
+    if [ -z "$ZONE_ID" ]; then
+        log "${RED}Error: Route 53 requires Hosted Zone ID (--zone or DDNS_ZONE_ID)${NC}" >&2
+        return 1
+    fi
+    log "Updating AWS Route 53 hosted zone ${ZONE_ID} record ${BOLD}$DOMAIN${NC} to ${GREEN}$ip${NC}..."
+
+    clean_zone="${ZONE_ID#/hostedzone/}"
+    payload="{\"Comment\":\"NODEX DDNS Update\",\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"${DOMAIN}.\",\"Type\":\"${RECORD_TYPE}\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"${ip}\"}]}}]}"
+
+    response=$(curl -s --connect-timeout 5 --max-time 15 --retry 1 --compressed -X POST \
+        "https://route53.amazonaws.com/2013-04-01/hostedzone/${clean_zone}/rrset" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data "$payload")
+
+    case "$response" in
+        *"ChangeInfo"*|*"PENDING"*|*"INSYNC"*)
+            log_box "AWS Route 53 Sync Result" "${GREEN}SUCCESS${NC}" "Record change submitted ($ip)"
+            return 0
+            ;;
+        *)
+            log_box "AWS Route 53 Sync Result" "${RED}FAILED${NC}" "Response: $response"
+            return 1
+            ;;
+    esac
+}
+
+update_gcp() {
+    ip="$1"
+    if [ -z "$PROJECT_ID" ]; then
+        log "${RED}Error: GCP Cloud DNS requires Project ID (--project-id or DDNS_PROJECT_ID)${NC}" >&2
+        return 1
+    fi
+    if [ -z "$ZONE_ID" ]; then
+        log "${RED}Error: GCP Cloud DNS requires Managed Zone (--zone or DDNS_ZONE_ID)${NC}" >&2
+        return 1
+    fi
+    log "Updating Google Cloud DNS project ${PROJECT_ID} zone ${ZONE_ID} (${BOLD}$DOMAIN${NC}) to ${GREEN}$ip${NC}..."
+
+    payload="{\"additions\":[{\"name\":\"${DOMAIN}.\",\"type\":\"${RECORD_TYPE}\",\"ttl\":300,\"rrdatas\":[\"${ip}\"]}]}"
+
+    response=$(curl -s --connect-timeout 5 --max-time 15 --retry 1 --compressed -X POST \
+        "https://dns.googleapis.com/dns/v1/projects/${PROJECT_ID}/managedZones/${ZONE_ID}/changes" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data "$payload")
+
+    case "$response" in
+        *"\"status\""*|*"\"kind\": \"dns#change\""*|*"\"id\""*)
+            log_box "Google Cloud DNS Sync Result" "${GREEN}SUCCESS${NC}" "Record change submitted ($ip)"
+            return 0
+            ;;
+        *)
+            log_box "Google Cloud DNS Sync Result" "${RED}FAILED${NC}" "Response: $response"
+            return 1
+            ;;
+    esac
 }
 
 update_cloudflare() {
@@ -282,7 +424,7 @@ update_cloudflare() {
     fi
 
     log "Querying Cloudflare API for existing $RECORD_TYPE record (${BOLD}$DOMAIN${NC})..."
-    records_response=$(curl -s --max-time 15 -X GET \
+    records_response=$(curl -s --connect-timeout 5 --max-time 15 --retry 1 --compressed -X GET \
         "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=${RECORD_TYPE}&name=${DOMAIN}" \
         -H "Authorization: Bearer ${TOKEN}" \
         -H "Content-Type: application/json")
@@ -300,7 +442,7 @@ update_cloudflare() {
     fi
 
     log "Updating Cloudflare record $record_id to ${GREEN}$ip${NC}..."
-    update_response=$(curl -s --max-time 15 -X PUT \
+    update_response=$(curl -s --connect-timeout 5 --max-time 15 --retry 1 --compressed -X PUT \
         "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${record_id}" \
         -H "Authorization: Bearer ${TOKEN}" \
         -H "Content-Type: application/json" \
@@ -347,6 +489,10 @@ run_check() {
         case "$PROVIDER" in
             cloudflare) update_cloudflare "$current_ip" ;;
             duckdns) update_duckdns "$current_ip" ;;
+            dynu) update_dynu "$current_ip" ;;
+            desec) update_desec "$current_ip" ;;
+            route53) update_route53 "$current_ip" ;;
+            gcp) update_gcp "$current_ip" ;;
             *) log "${RED}Error: Unsupported provider $PROVIDER${NC}" >&2; exit 1 ;;
         esac
 
@@ -357,24 +503,48 @@ run_check() {
 }
 
 # Quick Setup Config Action
+_provider_name() {
+    case "$1" in
+        0) echo "Cloudflare" ;;
+        1) echo "DuckDNS" ;;
+        2) echo "Dynu" ;;
+        3) echo "deSEC" ;;
+        4) echo "AWS Route 53" ;;
+        5) echo "Google Cloud DNS" ;;
+    esac
+}
+
 select_provider_tui() {
     p_sel=0
-    [ "${PROVIDER:-cloudflare}" = "duckdns" ] && p_sel=1
+    case "${PROVIDER:-cloudflare}" in
+        cloudflare) p_sel=0 ;;
+        duckdns) p_sel=1 ;;
+        dynu) p_sel=2 ;;
+        desec) p_sel=3 ;;
+        route53) p_sel=4 ;;
+        gcp) p_sel=5 ;;
+    esac
     old_stty=$(stty -g 2>/dev/null || true)
     stty -echo -icanon min 1 time 0 2>/dev/null || true
     printf "\033[?25l" >&2
     while true; do
-        printf "\033[H\033[2J" >&2
-        printf "%b=== Select DNS Provider ===%b\n\n" "${CYAN}${BOLD}" "${NC}" >&2
-        if [ "$p_sel" -eq 0 ]; then
-            printf "%b> 1. Cloudflare%b\n" "${CYAN}${BOLD}" "${NC}" >&2
-            printf "  2. DuckDNS   \n" >&2
-        else
-            printf "  1. Cloudflare\n" >&2
-            printf "%b> 2. DuckDNS   %b\n" "${CYAN}${BOLD}" "${NC}" >&2
-        fi
-        printf "\n----------------------------------------\n" >&2
-        printf "[Up/Down] Navigate  |  [Enter] Select\n" >&2
+        printf "\033[H\033[J" >&2
+        printf "%b──────────────────────────────────────────────────────────%b\n" "${GRAY}" "${NC}" >&2
+        printf "  %bSelect DNS Provider%b\n" "${BOLD}${WHITE}" "${NC}" >&2
+        printf "%b──────────────────────────────────────────────────────────%b\n\n" "${GRAY}" "${NC}" >&2
+
+        idx=0
+        while [ "$idx" -lt 6 ]; do
+            p_display=$(_provider_name "$idx")
+            if [ "$p_sel" -eq "$idx" ]; then
+                printf "  %b▎%b %b◆%b  %b%s%b\n" "${CYAN}" "${NC}" "${CYAN}" "${NC}" "${WHITE}" "$p_display" "${NC}" >&2
+            else
+                printf "    %b◇  %s%b\n" "${GRAY}" "$p_display" "${NC}" >&2
+            fi
+            idx=$((idx + 1))
+        done
+        printf "\n%b──────────────────────────────────────────────────────────%b\n" "${GRAY}" "${NC}" >&2
+        printf "%b  [↑/↓] Navigate  •  [Enter] Select%b\n" "${DIM}" "${NC}" >&2
 
         key=$(dd bs=1 count=1 2>/dev/null || true)
         action=0
@@ -387,14 +557,19 @@ select_provider_tui() {
             fi
             stty -echo -icanon min 1 time 0 2>/dev/null || true
             case "$k3" in
-                A|B|C|D) p_sel=$((1 - p_sel)) ;;
+                A) p_sel=$(( (p_sel - 1 + 6) % 6 )) ;; # Up
+                B) p_sel=$(( (p_sel + 1) % 6 )) ;;     # Down
             esac
-        elif [ "$key" = "j" ] || [ "$key" = "k" ] || [ "$key" = "w" ] || [ "$key" = "s" ]; then
-            p_sel=$((1 - p_sel))
-        elif [ "$key" = "1" ]; then
-            p_sel=0; action=1
-        elif [ "$key" = "2" ]; then
-            p_sel=1; action=1
+        elif [ "$key" = "k" ] || [ "$key" = "K" ] || [ "$key" = "w" ] || [ "$key" = "W" ]; then
+            p_sel=$(( (p_sel - 1 + 6) % 6 ))
+        elif [ "$key" = "j" ] || [ "$key" = "J" ] || [ "$key" = "s" ] || [ "$key" = "S" ]; then
+            p_sel=$(( (p_sel + 1) % 6 ))
+        elif [ "$key" = "1" ]; then p_sel=0; action=1
+        elif [ "$key" = "2" ]; then p_sel=1; action=1
+        elif [ "$key" = "3" ]; then p_sel=2; action=1
+        elif [ "$key" = "4" ]; then p_sel=3; action=1
+        elif [ "$key" = "5" ]; then p_sel=4; action=1
+        elif [ "$key" = "6" ]; then p_sel=5; action=1
         elif [ -z "$key" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
             action=1
         fi
@@ -403,22 +578,27 @@ select_provider_tui() {
     done
     stty "$old_stty" 2>/dev/null || stty sane 2>/dev/null || true
     printf "\033[?25h\033[H\033[2J" >&2
-    if [ "$p_sel" -eq 0 ]; then
-        echo "cloudflare"
-    else
-        echo "duckdns"
-    fi
+    case "$p_sel" in
+        0) echo "cloudflare" ;;
+        1) echo "duckdns" ;;
+        2) echo "dynu" ;;
+        3) echo "desec" ;;
+        4) echo "route53" ;;
+        5) echo "gcp" ;;
+    esac
 }
 
 quick_setup() {
-    echo ""
-    printf "%b=== NODEX Quick Credentials Setup ===%b\n\n" "${CYAN}${BOLD}" "${NC}"
+    printf "\033[H\033[J"
+    printf "%b──────────────────────────────────────────────────────────%b\n" "${GRAY}" "${NC}"
+    printf "  %bGateway Configuration%b\n" "${BOLD}${WHITE}" "${NC}"
+    printf "%b──────────────────────────────────────────────────────────%b\n\n" "${GRAY}" "${NC}"
 
     current_p="${PROVIDER:-cloudflare}"
     if [ -t 0 ]; then
         provider_val=$(select_provider_tui)
     else
-        printf "Provider (cloudflare | duckdns) [%s]: " "$current_p"
+        printf "Provider (cloudflare | duckdns | dynu | desec | route53 | gcp) [%s]: " "$current_p"
         read input_provider || true
         provider_val="${input_provider:-$current_p}"
     fi
@@ -427,15 +607,28 @@ quick_setup() {
     read input_domain || true
     domain_val="${input_domain:-$DOMAIN}"
 
-    printf "API Token [%s]: " "${TOKEN:-}"
+    printf "API Token / Key [%s]: " "${TOKEN:-}"
     read input_token || true
     token_val="${input_token:-$TOKEN}"
 
     zone_val=""
-    if [ "$provider_val" = "cloudflare" ]; then
-        printf "Cloudflare Zone ID [%s]: " "${ZONE_ID:-}"
-        read input_zone || true
-        zone_val="${input_zone:-$ZONE_ID}"
+    case "$provider_val" in
+        cloudflare|route53|gcp|desec)
+            prompt_zone="Zone ID"
+            [ "$provider_val" = "route53" ] && prompt_zone="AWS Hosted Zone ID"
+            [ "$provider_val" = "gcp" ] && prompt_zone="GCP Managed Zone"
+            [ "$provider_val" = "desec" ] && prompt_zone="deSEC Domain/Zone (optional)"
+            printf "%s [%s]: " "$prompt_zone" "${ZONE_ID:-}"
+            read input_zone || true
+            zone_val="${input_zone:-$ZONE_ID}"
+            ;;
+    esac
+
+    project_val=""
+    if [ "$provider_val" = "gcp" ]; then
+        printf "Google Cloud Project ID [%s]: " "${PROJECT_ID:-}"
+        read input_project || true
+        project_val="${input_project:-$PROJECT_ID}"
     fi
 
     target_config=""
@@ -451,6 +644,7 @@ DDNS_PROVIDER="${provider_val}"
 DDNS_DOMAIN="${domain_val}"
 DDNS_TOKEN="${token_val}"
 DDNS_ZONE_ID="${zone_val}"
+DDNS_PROJECT_ID="${project_val}"
 DDNS_RECORD_TYPE="${RECORD_TYPE:-A}"
 DDNS_INTERVAL="${INTERVAL:-300}"
 DDNS_MODE="${MODE:-once}"
@@ -461,42 +655,43 @@ EOF
     DOMAIN="$domain_val"
     TOKEN="$token_val"
     ZONE_ID="$zone_val"
+    PROJECT_ID="$project_val"
 
-    printf "\n%b✓ Configuration saved to %s%b\n" "${GREEN}" "$target_config" "${NC}"
-    printf "Press Enter to return to menu..."
+    printf "\n%b✓ Configuration saved to %s%b\n\n" "${GREEN}" "$target_config" "${NC}"
+    printf "%bPress Enter to return to menu...%b" "${DIM}" "${NC}"
     read _ || true
 }
 
 inspect_status() {
-    echo ""
-    printf "%b============================================================%b\n" "${CYAN}" "${NC}"
-    printf "%b  NODEX Status & System Health%b\n" "${BOLD}" "${NC}"
-    printf "%b============================================================%b\n" "${CYAN}" "${NC}"
+    printf "\033[H\033[J"
+    printf "%b──────────────────────────────────────────────────────────%b\n" "${GRAY}" "${NC}"
+    printf "  %bTelemetry & System Health%b\n" "${BOLD}${WHITE}" "${NC}"
+    printf "%b──────────────────────────────────────────────────────────%b\n\n" "${GRAY}" "${NC}"
 
-    printf "Active Provider  : %s\n" "${PROVIDER:-None}"
-    printf "Target Domain    : %s\n" "${DOMAIN:-Not Configured}"
-    printf "Record Type      : %s\n" "${RECORD_TYPE:-A}"
+    printf "  %bProvider%b      : %b%s%b\n" "${GRAY}" "${NC}" "${WHITE}" "${PROVIDER:-None}" "${NC}"
+    printf "  %bDomain%b        : %b%s%b\n" "${GRAY}" "${NC}" "${CYAN}" "${DOMAIN:-Not Configured}" "${NC}"
+    printf "  %bRecord Type%b   : %s\n" "${GRAY}" "${NC}" "${RECORD_TYPE:-A}"
 
     public_ip=$(get_public_ip 2>/dev/null || echo "Fetch Failed")
-    printf "Public IP        : %s\n" "$public_ip"
+    printf "  %bPublic IP%b     : %b%s%b\n" "${GRAY}" "${NC}" "${WHITE}" "$public_ip" "${NC}"
 
     if [ -n "$DOMAIN" ]; then
         cache_f=$(get_cache_file)
         if [ -f "$cache_f" ]; then
-            printf "Cached IP State  : %s (%s)\n" "$(cat "$cache_f")" "$cache_f"
+            printf "  %bCached State%b  : %b%s%b %b(%s)%b\n" "${GRAY}" "${NC}" "${GREEN}" "$(cat "$cache_f")" "${NC}" "${DIM}" "$cache_f" "${NC}"
         else
-            printf "Cached IP State  : No cache file yet\n"
+            printf "  %bCached State%b  : %bNo cache file yet%b\n" "${GRAY}" "${NC}" "${YELLOW}" "${NC}"
         fi
     fi
 
     if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nodex 2>/dev/null; then
-        printf "Daemon Status    : %bActive (systemd)%b\n" "${GREEN}" "${NC}"
+        printf "  %bDaemon Service%b: %b● ACTIVE (systemd)%b\n" "${GRAY}" "${NC}" "${GREEN}" "${NC}"
     else
-        printf "Daemon Status    : %bInactive / Manual%b\n" "${YELLOW}" "${NC}"
+        printf "  %bDaemon Service%b: %b○ INACTIVE / Manual%b\n" "${GRAY}" "${NC}" "${GRAY}" "${NC}"
     fi
 
-    printf "%b============================================================%b\n\n" "${CYAN}" "${NC}"
-    printf "Press Enter to return to menu..."
+    printf "\n%b──────────────────────────────────────────────────────────%b\n" "${GRAY}" "${NC}"
+    printf "%b  Press Enter to return to menu...%b" "${DIM}" "${NC}"
     read _ || true
 }
 
@@ -539,6 +734,39 @@ uninstall_nodex() {
     esac
 }
 
+# Fast kinetic micro-boot sequence (< 150ms)
+micro_boot_intro() {
+    [ ! -t 1 ] && return 0
+    [ "${NO_INTRO:-0}" -eq 1 ] && return 0
+
+    # Ensure cursor hidden
+    printf "\033[?25l"
+
+    # Frame 1: Dim matrix noise dots
+    printf "\033[H\033[J"
+    printf "%b ·  :   .·.   :··   .·:  :·  ·.%b\n" "${DIM}" "${NC}"
+    printf "%b: \\: : / · \\ :   \\ : ·: \\ \\/ /%b\n" "${DIM}" "${NC}"
+    printf "%b: .  :: (·) :: :) :: ·|   >  < %b\n" "${DIM}" "${NC}"
+    printf "%b:·\\:· \\:·:/ :··· :··· /_/\\_\\\\%b\n" "${DIM}" "${NC}"
+    sleep 0.04
+
+    # Frame 2: Half block matrix shades
+    printf "\033[H\033[J"
+    printf "%b ░  ▒   ▓▒░   ░▒▓   ▓░▒  ▒░  ░▒%b\n" "${GRAY}" "${NC}"
+    printf "%b| ▒| ░ / ▒ \\ |   \\ | ░▒| \\ \\/ /%b\n" "${GRAY}" "${NC}"
+    printf "%b| ░  || (▒) || ░) || ▒|   >  < %b\n" "${GRAY}" "${NC}"
+    printf "%b|░|\\▒| \\░▒▓/ |▒░▓/ |▓░▒| /_/\\_\\\\%b\n" "${GRAY}" "${NC}"
+    sleep 0.04
+
+    # Frame 3: Cyan glitch text
+    printf "\033[H\033[J"
+    printf "%b _  _   _░_   ___   _▒_  __  __%b\n" "${CYAN}" "${NC}"
+    printf "%b| \\| | / _ \\ | ▓ \\ | __| \\ \\/ /%b\n" "${CYAN}" "${NC}"
+    printf "%b| .  || (_) || |) || _|   > ░< %b\n" "${CYAN}" "${NC}"
+    printf "%b|_|\\_| \\___/ |___/ |___| /_/\\_\\\\%b\n" "${CYAN}" "${NC}"
+    sleep 0.04
+}
+
 # TUI Interactive Router Menu Engine
 tui_menu() {
     OLD_STTY=$(stty -g 2>/dev/null || true)
@@ -548,6 +776,11 @@ tui_menu() {
         exit 0
     }
     trap cleanup_tui INT TERM EXIT
+
+    stty -echo -icanon min 1 time 0 2>/dev/null || true
+    printf "\033[?25l" # Hide cursor
+
+    micro_boot_intro
 
     selected=0
     get_remote_info
@@ -564,69 +797,102 @@ tui_menu() {
         update_label="${REMOTE_HASH}"
     fi
 
-    if [ "$has_update" -eq 1 ]; then
-        menu_items="* Update to ${update_label};1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
-        total_items=7
-    else
-        menu_items="1. Sync DNS Now (One-Shot Trigger);2. Start Background Daemon;3. Quick Setup / Configure Credentials;4. Inspect Status and Cache Logs;5. Uninstall NODEX;6. Exit"
-        total_items=6
-    fi
-
     # Pre-fetch public IP once before entering loop so screen redraws don't block
     cached_tui_ip=$(get_public_ip 2>/dev/null || echo "")
 
-    stty -echo -icanon min 1 time 0 2>/dev/null || true
-    printf "\033[?25l" # Hide cursor
-
     while true; do
-        printf "\033[H\033[2J" # Clear screen smoothly
+        printf "\033[H\033[J" # Clear screen smoothly and reposition
 
-        # Color & raw value evaluation for header fields
-        prov_val="${PROVIDER:-None}"
-        if [ "$prov_val" = "None" ]; then prov_color="$YELLOW"; else prov_color="$GREEN"; fi
-
-        dom_val="${DOMAIN:-Not Configured}"
-        if [ "$dom_val" = "Not Configured" ]; then dom_color="$YELLOW"; else dom_color="$GREEN"; fi
-
-        ip_val="${cached_tui_ip:-Not Available}"
-        if [ "$ip_val" = "Not Available" ]; then ip_color="$YELLOW"; else ip_color="$GREEN"; fi
-
-        printf "+----------------------------------------------------------+\n"
-        if [ "$has_update" -eq 1 ]; then
-            title_text="NODEX Gateway (v${CURRENT_VERSION}) -> Update: ${update_label}"
-            printf "| %b%-56s%b |\n" "${YELLOW}${BOLD}" "$title_text" "${NC}"
-        else
-            title_text="NODEX Gateway (v${CURRENT_VERSION})"
-            printf "| %b%-56s%b |\n" "${CYAN}${BOLD}" "$title_text" "${NC}"
+        # Status evaluation
+        is_running=0
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nodex 2>/dev/null; then
+            is_running=1
         fi
-        printf "| Provider  : %b%-44s%b |\n" "$prov_color" "$prov_val" "${NC}"
-        printf "| Target    : %b%-44s%b |\n" "$dom_color" "$dom_val" "${NC}"
-        printf "| Public IP : %b%-44s%b |\n" "$ip_color" "$ip_val" "${NC}"
-        printf "+----------------------------------------------------------+\n\n"
 
-        idx=0
-        old_ifs="$IFS"
-        IFS=";"
-        for item in $menu_items; do
-            if [ "$idx" -eq "$selected" ]; then
-                if [ "$has_update" -eq 1 ] && [ "$idx" -eq 0 ]; then
-                    printf "%b> %s%b\n" "${YELLOW}${BOLD}" "$item" "${NC}"
-                else
-                    printf "%b> %s%b\n" "${CYAN}${BOLD}" "$item" "${NC}"
-                fi
+        # Prepare metadata strings
+        prov_text="${PROVIDER:-none}"
+        dom_text="${DOMAIN:-}"
+        ip_text="${cached_tui_ip:-0.0.0.0}"
+
+        # Truncate long values — pure shell, no subshell forks
+        if [ ${#dom_text} -gt 28 ]; then
+            dom_text="$(printf '%.25s' "$dom_text")..."
+        fi
+        if [ ${#ip_text} -gt 15 ]; then
+            ip_text="$(printf '%.12s' "$ip_text")..."
+        fi
+
+        # --- Header: Logo left, metadata right ---
+        # Logo is 4 lines tall; metadata occupies lines 2-3 (vertically centered)
+        # Line 1: logo only
+        printf "%b _  _   ___   ___   ___  __  __%b\n" "${CYAN}" "${NC}"
+        # Line 2: logo + meta line 1
+        if [ -n "$dom_text" ]; then
+            printf "%b| \\| | / _ \\ |   \\ | __| \\ \\/ /%b    %b%s%b // %b%s%b\n" \
+                "${CYAN}" "${NC}" "${WHITE}" "$prov_text" "${NC}" "${CYAN}" "$dom_text" "${NC}"
+        else
+            printf "%b| \\| | / _ \\ |   \\ | __| \\ \\/ /%b    %b%s%b // %b%s%b\n" \
+                "${CYAN}" "${NC}" "${WHITE}" "$prov_text" "${NC}" "${YELLOW}" "unconfigured" "${NC}"
+        fi
+        # Line 3: logo + meta line 2
+        if [ "$is_running" -eq 1 ]; then
+            stat_seg="${GREEN}● ACTIVE${NC}"
+        else
+            stat_seg="${GRAY}○ IDLE${NC}"
+        fi
+        printf "%b| .  || (_) || |) || _|   >  < %b    %b%s%b %b•%b %b %b•%b v%s\n" \
+            "${CYAN}" "${NC}" "${DIM}" "$ip_text" "${NC}" "${GRAY}" "${NC}" "$stat_seg" "${GRAY}" "${NC}" "${CURRENT_VERSION}"
+        # Line 4: logo only
+        printf "%b|_|\\_| \\___/ |___/ |___| /_/\\_\\\\%b\n" "${CYAN}" "${NC}"
+
+        # Update banner (if available)
+        if [ "$has_update" -eq 1 ]; then
+            printf "%b  Update available: %s%b\n" "${YELLOW}" "$update_label" "${NC}"
+        fi
+
+        # Horizontal divider
+        printf "%b──────────────────────────────────────────────────────────%b\n\n" "${GRAY}" "${NC}"
+
+        # Menu items — no subshells, no awk. Direct case lookup per index.
+        # ponytail: hardcoded item count (6/7). Upgrade to dynamic IFS-split if menu exceeds ~10 items.
+        if [ "$has_update" -eq 1 ]; then
+            total_items=7
+        else
+            total_items=6
+        fi
+
+        _tui_label() {
+            if [ "$has_update" -eq 1 ]; then
+                case "$1" in
+                    0) echo "Update NODEX" ;; 1) echo "Sync DNS Pipeline" ;;
+                    2) echo "Daemon Service" ;; 3) echo "Gateway Config" ;;
+                    4) echo "Telemetry & Logs" ;; 5) echo "Uninstall NODEX" ;;
+                    6) echo "Exit Console" ;;
+                esac
             else
-                if [ "$has_update" -eq 1 ] && [ "$idx" -eq 0 ]; then
-                    printf "  %b%s%b\n" "${YELLOW}" "$item" "${NC}"
-                else
-                    printf "  %s\n" "$item"
-                fi
+                case "$1" in
+                    0) echo "Sync DNS Pipeline" ;; 1) echo "Daemon Service" ;;
+                    2) echo "Gateway Config" ;; 3) echo "Telemetry & Logs" ;;
+                    4) echo "Uninstall NODEX" ;; 5) echo "Exit Console" ;;
+                esac
             fi
-            idx=$((idx + 1))
-        done
-        IFS="$old_ifs"
+        }
 
-        printf "\n----------------------------------------\n"
-        printf "[Up/Down] Navigate  |  [Enter] Select  |  [q] Quit\n"
+        # Render menu items — zero forks in the hot loop
+        i=0
+        while [ "$i" -lt "$total_items" ]; do
+            t_val=$(_tui_label "$i")
+            if [ "$i" -eq "$selected" ]; then
+                printf "  %b▎%b %b◆%b  %b%s%b\n" "${CYAN}" "${NC}" "${CYAN}" "${NC}" "${WHITE}" "$t_val" "${NC}"
+            else
+                printf "    ◇  %b%s%b\n" "${GRAY}" "$t_val" "${NC}"
+            fi
+            i=$((i + 1))
+        done
+
+        # Footer
+        printf "\n%b──────────────────────────────────────────────────────────%b\n" "${GRAY}" "${NC}"
+        printf "%b  [↑/↓] Navigate  •  [Enter] Execute  •  [q] Quit%b\n" "${DIM}" "${NC}"
 
         key=$(dd bs=1 count=1 2>/dev/null || true)
         action=0
@@ -689,8 +955,14 @@ tui_menu() {
 }
 
 main() {
+    # Trap termination signals to clean up gracefully
+    trap 'exit 0' INT TERM HUP
+
     # If parameters passed, run CLI mode headlessly
-    if [ "$HAS_ARGS" -eq 1 ] || [ "$MODE" = "daemon" ]; then
+    if [ "$HAS_ARGS" -eq 1 ] || [ "$MODE" = "daemon" ] || [ -n "${DDNS_TEST_MODE:-}" ]; then
+        if [ -n "${DDNS_TEST_MODE:-}" ]; then
+            return 0 2>/dev/null || exit 0
+        fi
         if [ "$MODE" = "daemon" ]; then
             show_banner
             log "Starting NODEX in daemon mode (interval: ${INTERVAL}s)..."
