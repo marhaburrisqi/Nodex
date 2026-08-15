@@ -1,10 +1,13 @@
 FROM alpine:3.20
 
-RUN apk add --no-cache curl bash tzdata
+RUN apk add --no-cache curl ca-certificates tzdata
 
 WORKDIR /app
-COPY ddns.sh /app/ddns.sh
-RUN chmod +x /app/ddns.sh
 
-ENTRYPOINT ["/app/ddns.sh"]
+COPY ddns.sh /usr/local/bin/nodex
+RUN chmod +x /usr/local/bin/nodex
+
+USER guest
+
+ENTRYPOINT ["/usr/local/bin/nodex"]
 CMD ["--daemon"]

@@ -1,14 +1,28 @@
 version: '3.8'
 
 services:
-  ddns-bot:
+  nodex:
     build: .
-    container_name: ddns-bot
+    image: marhaburrisqi/nodex:latest
+    container_name: nodex
     restart: unless-stopped
+    network_mode: host  
     environment:
-      - DDNS_PROVIDER=cloudflare
-      - DDNS_DOMAIN=home.example.com
-      - DDNS_TOKEN=your_cloudflare_api_token
-      - DDNS_ZONE_ID=your_cloudflare_zone_id
-      - DDNS_INTERVAL=300
-      - DDNS_MODE=daemon
+      - PROVIDER=cloudflare          
+      - DOMAIN=home.example.com
+      - TOKEN=your_api_token_here
+      - ZONE_ID=your_zone_id_here    # Wajib untuk Cloudflare
+      - RECORD_TYPE=A                
+      - INTERVAL=300                
+      - MODE=daemon
+      - FORCE=false
+    volumes:
+      - nodex_cache:/tmp           
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: '0.1'
+
+volumes:
+  nodex_cache:
