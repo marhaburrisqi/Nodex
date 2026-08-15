@@ -14,6 +14,26 @@ DRY_RUN=0
 TEST_IP=""
 DRY_RUN_UPDATE=0
 
+# Config File Paths
+CONFIG_DIR="${HOME:-/root}/.config/nodex"
+CONFIG_FILE="${CONFIG_DIR}/config"
+GLOBAL_CONFIG="/etc/default/nodex"
+
+# Load config if present
+if [ -f "$GLOBAL_CONFIG" ]; then
+    . "$GLOBAL_CONFIG" 2>/dev/null || true
+elif [ -f "$CONFIG_FILE" ]; then
+    . "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+# Re-assign variables loaded from config if ENV/CLI didn't override baseline defaults
+PROVIDER="${DDNS_PROVIDER:-$PROVIDER}"
+DOMAIN="${DDNS_DOMAIN:-$DOMAIN}"
+TOKEN="${DDNS_TOKEN:-$TOKEN}"
+ZONE_ID="${DDNS_ZONE_ID:-$ZONE_ID}"
+RECORD_TYPE="${DDNS_RECORD_TYPE:-$RECORD_TYPE}"
+INTERVAL="${DDNS_INTERVAL:-$INTERVAL}"
+
 # ANSI Colors
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -21,6 +41,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
 BOLD='\033[1m'
+DIM='\033[2m'
+REVERSE='\033[7m'
 NC='\033[0m'
 
 show_banner() {
@@ -70,6 +92,11 @@ Options:
 EOF
     exit 0
 }
+
+HAS_ARGS=0
+if [ $# -gt 0 ]; then
+    HAS_ARGS=1
+fi
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -274,20 +301,219 @@ run_check() {
     fi
 }
 
-main() {
-    if [ "$MODE" = "daemon" ]; then
-        show_banner
-        log "Starting NODEX in daemon mode (interval: ${INTERVAL}s)..."
-        while true; do
-            run_check || log "${YELLOW}Warning: Check iteration encountered errors.${NC}"
-            sleep "$INTERVAL"
-        done
+# Quick Setup Config Action
+quick_setup() {
+    echo ""
+    printf "%b=== NODEX Quick Credentials Setup ===%b\n\n" "${CYAN}${BOLD}" "${NC}"
+
+    current_p="${PROVIDER:-cloudflare}"
+    printf "Provider (cloudflare | duckdns) [%s]: " "$current_p"
+    read input_provider || true
+    provider_val="${input_provider:-$current_p}"
+
+    printf "Domain / FQDN [%s]: " "${DOMAIN:-}"
+    read input_domain || true
+    domain_val="${input_domain:-$DOMAIN}"
+
+    printf "API Token [%s]: " "${TOKEN:-}"
+    read input_token || true
+    token_val="${input_token:-$TOKEN}"
+
+    zone_val=""
+    if [ "$provider_val" = "cloudflare" ]; then
+        printf "Cloudflare Zone ID [%s]: " "${ZONE_ID:-}"
+        read input_zone || true
+        zone_val="${input_zone:-$ZONE_ID}"
+    fi
+
+    target_config=""
+    if [ -w "/etc/default" ] || [ "$(id -u)" -eq 0 ]; then
+        target_config="/etc/default/nodex"
     else
-        if [ -z "$DOMAIN" ] || [ -z "$TOKEN" ]; then
-            usage
+        mkdir -p "$CONFIG_DIR"
+        target_config="$CONFIG_FILE"
+    fi
+
+    cat <<EOF > "$target_config"
+DDNS_PROVIDER="${provider_val}"
+DDNS_DOMAIN="${domain_val}"
+DDNS_TOKEN="${token_val}"
+DDNS_ZONE_ID="${zone_val}"
+DDNS_RECORD_TYPE="${RECORD_TYPE:-A}"
+DDNS_INTERVAL="${INTERVAL:-300}"
+DDNS_MODE="${MODE:-once}"
+EOF
+    chmod 600 "$target_config" 2>/dev/null || true
+
+    PROVIDER="$provider_val"
+    DOMAIN="$domain_val"
+    TOKEN="$token_val"
+    ZONE_ID="$zone_val"
+
+    printf "\n%b✓ Configuration saved to %s%b\n" "${GREEN}" "$target_config" "${NC}"
+    printf "Press Enter to return to menu..."
+    read _ || true
+}
+
+inspect_status() {
+    echo ""
+    printf "%b============================================================%b\n" "${CYAN}" "${NC}"
+    printf "%b  NODEX Status & System Health%b\n" "${BOLD}" "${NC}"
+    printf "%b============================================================%b\n" "${CYAN}" "${NC}"
+
+    printf "Active Provider  : %s\n" "${PROVIDER:-None}"
+    printf "Target Domain    : %s\n" "${DOMAIN:-Not Configured}"
+    printf "Record Type      : %s\n" "${RECORD_TYPE:-A}"
+
+    public_ip=$(get_public_ip 2>/dev/null || echo "Fetch Failed")
+    printf "Public IP        : %s\n" "$public_ip"
+
+    if [ -n "$DOMAIN" ]; then
+        cache_f=$(get_cache_file)
+        if [ -f "$cache_f" ]; then
+            printf "Cached IP State  : %s (%s)\n" "$(cat "$cache_f")" "$cache_f"
         else
+            printf "Cached IP State  : No cache file yet\n"
+        fi
+    fi
+
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nodex 2>/dev/null; then
+        printf "Daemon Status    : %bActive (systemd)%b\n" "${GREEN}" "${NC}"
+    else
+        printf "Daemon Status    : %bInactive / Manual%b\n" "${YELLOW}" "${NC}"
+    fi
+
+    printf "%b============================================================%b\n\n" "${CYAN}" "${NC}"
+    printf "Press Enter to return to menu..."
+    read _ || true
+}
+
+uninstall_nodex() {
+    echo ""
+    printf "%bAre you sure you want to uninstall NODEX? (y/N): %b" "${RED}${BOLD}" "${NC}"
+    read confirm || true
+    case "$confirm" in
+        y|Y|yes|YES)
+            if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nodex 2>/dev/null; then
+                systemctl disable --now nodex 2>/dev/null || true
+                rm -f /etc/systemd/system/nodex.service 2>/dev/null || true
+            fi
+            rm -f /usr/local/bin/nodex /usr/local/bin/modex 2>/dev/null || true
+            rm -f "$CONFIG_FILE" "$GLOBAL_CONFIG" 2>/dev/null || true
+            rm -f /tmp/ddns_*.cache 2>/dev/null || true
+            printf "%b✓ NODEX uninstalled cleanly.%b\n" "${GREEN}" "${NC}"
+            exit 0
+            ;;
+        *)
+            printf "Uninstall cancelled.\n"
+            sleep 1
+            ;;
+    esac
+}
+
+# TUI Interactive Router Menu Engine
+tui_menu() {
+    OLD_STTY=$(stty -g 2>/dev/null || true)
+    cleanup_tui() {
+        stty "$OLD_STTY" 2>/dev/null || stty sane 2>/dev/null || true
+        printf "\033[?25h"
+    }
+    trap cleanup_tui INT TERM EXIT
+
+    selected=0
+    menu_items="Sync DNS Now (One-Shot Trigger);Start Background Daemon;Quick Setup / Configure Credentials;Inspect Status & Cache Logs;Uninstall NODEX;Exit"
+
+    current_ip="Checking..."
+
+    stty -echo -icanon min 1 time 0 2>/dev/null || true
+    printf "\033[?25l" # Hide cursor
+
+    while true; do
+        printf "\033[H\033[2J" # Clear screen smoothly
+
+        printf "%b============================================================%b\n" "${CYAN}" "${NC}"
+        printf "%b  NODEX Gateway (v1.0.0)%b\n" "${BOLD}" "${NC}"
+        printf "  📡 Provider  : %b%s%b\n" "${GREEN}" "${PROVIDER:-None}" "${NC}"
+        printf "  🌐 Target    : %b%s%b\n" "${GREEN}" "${DOMAIN:-Not Configured}" "${NC}"
+        printf "%b============================================================%b\n\n" "${CYAN}" "${NC}"
+
+        idx=0
+        old_ifs="$IFS"
+        IFS=";"
+        for item in $menu_items; do
+            if [ "$idx" -eq "$selected" ]; then
+                printf "  %b★ %-40s%b\n" "${REVERSE}${BOLD}" "$item" "${NC}"
+            else
+                printf "  %b  %-40s%b\n" "${DIM}" "$item" "${NC}"
+            fi
+            idx=$((idx + 1))
+        done
+        IFS="$old_ifs"
+
+        printf "\n%b[Use Up/Down Arrow or k/j, Enter to Select, q to Exit]%b\n" "${DIM}" "${NC}"
+
+        key=$(dd bs=1 count=1 2>/dev/null || true)
+
+        if [ "$key" = "$(printf '\033')" ]; then
+            stty -echo -icanon min 0 time 1 2>/dev/null || true
+            k2=$(dd bs=1 count=1 2>/dev/null || true)
+            k3=$(dd bs=1 count=1 2>/dev/null || true)
+            stty -echo -icanon min 1 time 0 2>/dev/null || true
+            if [ "$k2" = "[" ]; then
+                case "$k3" in
+                    A) selected=$(( (selected - 1 + 6) % 6 )) ;; # Up
+                    B) selected=$(( (selected + 1) % 6 )) ;;     # Down
+                esac
+            fi
+        elif [ "$key" = "k" ] || [ "$key" = "K" ]; then
+            selected=$(( (selected - 1 + 6) % 6 ))
+        elif [ "$key" = "j" ] || [ "$key" = "J" ]; then
+            selected=$(( (selected + 1) % 6 ))
+        elif [ "$key" = "q" ] || [ "$key" = "Q" ]; then
+            cleanup_tui
+            printf "\033[H\033[2J"
+            exit 0
+        elif [ -z "$key" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
+            cleanup_tui
+            printf "\033[H\033[2J"
+            case "$selected" in
+                0) FORCE=1; run_check; printf "\nPress Enter to return to menu..."; read _ || true ;;
+                1) MODE="daemon"; main ;;
+                2) quick_setup ;;
+                3) inspect_status ;;
+                4) uninstall_nodex ;;
+                5) exit 0 ;;
+            esac
+            stty -echo -icanon min 1 time 0 2>/dev/null || true
+            printf "\033[?25l"
+        fi
+    done
+}
+
+main() {
+    # If parameters passed, run CLI mode headlessly
+    if [ "$HAS_ARGS" -eq 1 ] || [ "$MODE" = "daemon" ]; then
+        if [ "$MODE" = "daemon" ]; then
             show_banner
-            run_check
+            log "Starting NODEX in daemon mode (interval: ${INTERVAL}s)..."
+            while true; do
+                run_check || log "${YELLOW}Warning: Check iteration encountered errors.${NC}"
+                sleep "$INTERVAL"
+            done
+        else
+            if [ -z "$DOMAIN" ] || [ -z "$TOKEN" ]; then
+                usage
+            else
+                show_banner
+                run_check
+            fi
+        fi
+    else
+        # If no arguments passed, check if in an interactive TTY
+        if [ -t 0 ]; then
+            tui_menu
+        else
+            usage
         fi
     fi
 }
